@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试详情 · LLM-API-Eval</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <style>
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px 20px;
+        }
+        .info-label { font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 2px; }
+        .info-value { font-size: var(--fs-md); word-break: break-all; font-variant-numeric: tabular-nums; }
+        .info-value.strong { font-weight: 650; }
+        .sla-reasons { list-style: none; margin-top: 6px; }
+        .sla-reasons li {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            padding: 6px 0;
+            font-size: var(--fs-sm);
+            color: var(--text-2);
+        }
+        .sla-reasons li::before { content: '·'; color: var(--text-3); font-weight: 700; }
+        .err-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--r-sm);
+            background: var(--bg-deep);
+            margin-bottom: 8px;
+        }
+        .err-msg {
+            word-break: break-word;
+            font-size: var(--fs-sm);
+            color: var(--text-2);
+            font-family: var(--mono);
+        }
+        .err-count { flex-shrink: 0; }
+        details.raw-config summary {
+            cursor: pointer;
+            color: var(--text-2);
+            font-size: var(--fs-sm);
+            user-select: none;
+        }
+        details.raw-config summary:hover { color: var(--text-1); }
+        details.raw-config pre {
+            margin-top: 10px;
+            padding: 14px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border);
+            border-radius: var(--r-sm);
+            max-height: 420px;
+            overflow: auto;
+            font-size: var(--fs-xs);
+            line-height: 1.6;
+            color: var(--text-2);
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        /* 分钟级趋势图 */
+        .trend-block { margin-bottom: 18px; }
+        .trend-block:last-child { margin-bottom: 0; }
+        .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-2); margin-bottom: 6px; }
+        .chart-legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+        .chart-legend .lg i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+        .chart-holder svg { width: 100%; height: auto; display: block; }
+    </style>
+</head>
+<body data-page="history">
+    <div id="page-content">
+        <div class="card"><div style="text-align:center;padding:48px 0;color:var(--text-3)"><span class="spinner"></span></div></div>
+    </div>
+
+    <script src="/assets/js/i18n.js"></script>
+    <script src="/assets/js/i18n/en.common.js"></script>
+    <script src="/assets/js/i18n/en.detail.js"></script>
+    <script src="/assets/js/api.js"></script>
+    <script src="/assets/js/ws.js"></script>
+    <script src="/assets/js/layout.js"></script>
+    <script>
+        (function () {
+            'use strict';
+
+            const MODE_TEXT = {
+                fixed: t('固定压测'),
+                auto: t('自动增压'),
+                concurrency: t('恒定并发'),
+                'concurrency-ramp': t('并发阶梯'),
+                seek: t('自动寻优'),
+                probe: t('能力探测'),
+            };
+            const MODE_BADGE = {
+                auto: 'accent',
+                seek: 'accent',
+                fixed: 'info',
+                concurrency: 'success',
+                'concurrency-ramp': 'success',
+                probe: 'warning',
+            };
+            const PROMPT_MODE_TEXT = { fixed: t('固定请求'), random: t('随机请求'), dataset: t('数据集') };
+
+            let historyId = null;
+
+            function safeJson(s, fallback) {
+                if (s == null) return fallback;
+                if (typeof s !== 'string') return s;
+                try { return JSON.parse(s); } catch (e) { return fallback; }
+            }
+
+            function fmtDT(iso, withSec) {
+                if (!iso) return '-';
+                const d = new Date(iso);
+                if (isNaN(d.getTime())) return String(iso);
+                const p = (x) => String(x).padStart(2, '0');
+                const base = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+                return withSec ? `${base}:${p(d.getSeconds())}` : base;
+            }
+
+            function fmtRatio(value) {
+                const num = Number(value);
+                if (!Number.isFinite(num)) return '-';
+                return `${Math.round(num * 10000) / 100}%`;
+            }
+
+            function rateClass(rate) {
+                const v = Number(rate) || 0;
+                return v >= 90 ? 'text-success' : v >= 70 ? 'text-warning' : 'text-danger';
+            }
+
+            function infoItem(label, value) {
+                return `<div><div class="info-label">${label}</div><div class="info-value">${value}</div></div>`;
+            }
+
+            function statCard(label, value, cls, unit) {
+                return `<div class="stat-card ${cls || ''}">
+                    <div class="stat-label">${label}</div>
+                    <div class="stat-value">${value}${unit ? `<span class="stat-unit">${unit}</span>` : ''}</div>
+                </div>`;
+            }
+
+            async function withLoading(btn, fn) {
+                const old = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner"></span>';
+                try {
+                    await fn();
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = old;
+                }
+            }
+
+            // ============ 分钟级趋势图（内联 SVG 折线） ============
+            function hhmm(iso) {
+                const d = new Date(iso);
+                if (isNaN(d.getTime())) return '';
+                return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            }
+
+            function fmtAxisMs(v) {
+                if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 's';
+                return Math.round(v) + 'ms';
+            }
+
+            function fmtAxisNum(v) {
+                if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+                return String(Math.round(v));
+            }
+
+            function niceStep(raw) {
+                const pow = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-9))));
+                const r = raw / pow;
+                return (r >= 5 ? 5 : r >= 2 ? 2 : 1) * pow;
+            }
+
+            /** series: [{ name, color, values:(number|null)[] }]，null 点断线 */
+            function chartSvg(series, timestamps, yFmt) {
+                const W = 860, H = 230;
+                const PAD = { l: 62, r: 14, t: 14, b: 28 };
+                const iw = W - PAD.l - PAD.r;
+                const ih = H - PAD.t - PAD.b;
+                const n = series[0].values.length;
+                const nums = series.flatMap((s) => s.values.filter((v) => v != null));
+                if (!nums.length || !n) return '';
+
+                const rawMax = Math.max(...nums);
+                const step = niceStep(rawMax / 4 || 1);
+                const max = Math.max(step, Math.ceil(rawMax / step) * step);
+                const x = (i) => PAD.l + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
+                const y = (v) => PAD.t + ih - (Math.min(v, max) / max) * ih;
+
+                let grid = '';
+                for (let g = 0; g <= 4; g++) {
+                    const gv = (max * g) / 4;
+                    const gy = y(gv).toFixed(1);
+                    grid += `<line x1="${PAD.l}" y1="${gy}" x2="${W - PAD.r}" y2="${gy}" stroke="rgba(148,163,184,0.14)"/>`
+                        + `<text x="${PAD.l - 8}" y="${Number(gy) + 4}" text-anchor="end" font-size="11" fill="#94a3b8">${yFmt(gv)}</text>`;
+                }
+
+                const tickEvery = Math.max(1, Math.ceil(n / 6));
+                let xLabels = '';
+                for (let i = 0; i < n; i += tickEvery) {
+                    const lbl = timestamps[i] ? hhmm(timestamps[i]) : `+${i}m`;
+                    xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="#94a3b8">${lbl}</text>`;
+                }
+
+                const paths = series.map((s) => {
+                    let d = '';
+                    let pen = false;
+                    s.values.forEach((v, i) => {
+                        if (v == null) { pen = false; return; }
+                        d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1) + ' ';
+                        pen = true;
+                    });
+                    d = d.trim();
+                    if (!d) return '';
+                    // 极少点时补圆点标记，避免单个点不可见
+                    const dots = n <= 2
+                        ? s.values.map((v, i) => v == null ? '' : `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3" fill="${s.color}"/>`).join('')
+                        : '';
+                    return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
+                }).join('');
+
+                return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">${grid}${xLabels}${paths}</svg>`;
+            }
+
+            function chartBlock(title, series, timestamps, yFmt, unit) {
+                const svg = chartSvg(series, timestamps, yFmt);
+                if (!svg) return '';
+                const legend = series.map((s) =>
+                    `<span class="lg"><i style="background:${s.color}"></i>${esc(s.name)}${unit ? `（${unit}）` : ''}</span>`
+                ).join('');
+                return `
+                    <div class="trend-block">
+                        <div class="chart-legend">${legend}</div>
+                        <div class="chart-holder">${svg}</div>
+                    </div>`;
+            }
+
+            function buildTrendCharts(minuteStats) {
+                if (!minuteStats.length) return '';
+                const ts = minuteStats.map((m) => m.timestamp);
+                const hasLatency = minuteStats.some((m) => m.avgResponseTime != null);
+                const hasTokens = minuteStats.some((m) =>
+                    (Number(m.tpm) || 0) > 0 || (Number(m.promptTokens) || 0) > 0 || (Number(m.completionTokens) || 0) > 0);
+                if (!hasLatency && !hasTokens) return '';
+
+                const blocks = [];
+                if (hasLatency) {
+                    blocks.push(chartBlock(t('分钟平均响应延迟'), [
+                        { name: t('平均响应时间（成功请求）'), color: '#fbbf24', values: minuteStats.map((m) => (m.avgResponseTime == null ? null : m.avgResponseTime)) },
+                    ], ts, fmtAxisMs, ''));
+                }
+                if (hasTokens) {
+                    blocks.push(chartBlock(t('Token 吞吐趋势'), [
+                        { name: t('总 TPM'), color: '#22d3ee', values: minuteStats.map((m) => (m.tpm == null ? null : Number(m.tpm))) },
+                        { name: t('输入'), color: '#a78bfa', values: minuteStats.map((m) => (m.promptTokens == null ? null : Number(m.promptTokens))) },
+                        { name: t('输出'), color: '#34d399', values: minuteStats.map((m) => (m.completionTokens == null ? null : Number(m.completionTokens))) },
+                    ], ts, fmtAxisNum, t('tokens/分')));
+                }
+                if (!blocks.length) return '';
+
+                return `
+                    <div class="card mt-4">
+                        <div class="card-title">${t('分钟级趋势')}</div>
+                        <div class="card-desc">${t('延迟与吞吐随时间的变化，用于定位性能拐点与抖动；早期记录可能缺少分钟级延迟数据')}</div>
+                        ${blocks.join('')}
+                    </div>`;
+            }
+
+            function showEmpty(msg) {
+                document.getElementById('page-content').innerHTML = `
+                    <div class="card">
+                        <div class="empty-state">
+                            ${Layout.icons.alert}
+                            <div class="e-title">${esc(msg)}</div>
+                            <div class="mt-3"><a class="btn btn-ghost" href="/history">${t('返回历史列表')}</a></div>
+                        </div>
+                    </div>`;
+            }
+
+            async function load() {
+                const params = new URLSearchParams(window.location.search);
+                historyId = params.get('id');
+                if (!historyId) {
+                    showEmpty(t('无效的记录 ID'));
+                    return;
+                }
+                try {
+                    const record = await API.get(`/api/history/${historyId}`);
+                    render(record);
+                } catch (e) {
+                    showEmpty(e.status === 404 ? t('记录不存在，或无权访问该记录') : (t('加载失败：') + e.message));
+                }
+            }
+
+            function render(record) {
+                const minuteStats = safeJson(record.minuteStats, []) || [];
+                const errorSummary = safeJson(record.errorSummary, {}) || {};
+                const config = safeJson(record.test_config, null);
+                const trendChartsHtml = buildTrendCharts(minuteStats);
+
+                const modeText = MODE_TEXT[record.test_mode] || record.test_mode || '-';
+                const modeBadge = MODE_BADGE[record.test_mode] || 'muted';
+                const requestTypeText = record.request_type === 'stream' ? t('流式请求') : t('非流式请求');
+                const promptModeText = PROMPT_MODE_TEXT[record.prompt_mode] || record.prompt_mode || '-';
+                const isRampMode = record.test_mode === 'auto' || record.test_mode === 'seek';
+                const rate = Number(record.success_rate) || 0;
+                const totalTokens = Number(record.total_tokens) || 0;
+                const maxRpm = Number(record.max_rpm) || 0;
+                const maxTpm = Number(record.max_tpm) || 0;
+                const recRpm = Number(record.recommended_rpm) || 0;
+                const recTpm = Number(record.recommended_tpm) || 0;
+                const hasEval = !!(maxRpm || maxTpm || recRpm || recTpm);
+
+                // SLA 结论（记录里只落库 sla_met；reasons 若后续存在于 record.sla / testConfig.sla 则展示）
+                const slaMetRaw = record.sla_met;
+                const slaKnown = slaMetRaw === 0 || slaMetRaw === 1 || slaMetRaw === '0' || slaMetRaw === '1';
+                const slaMet = Number(slaMetRaw) === 1;
+                const slaSrc = (record.sla && typeof record.sla === 'object' && !Array.isArray(record.sla))
+                    ? record.sla
+                    : (config && typeof config === 'object' && config.sla && typeof config.sla === 'object' ? config.sla : null);
+                let slaReasons = Array.isArray(slaSrc && slaSrc.reasons) ? slaSrc.reasons : [];
+                if (!slaReasons.length && slaKnown) {
+                    slaReasons = [slaMet
+                        ? t('已达成 SLA：压测中测得最大可持续 RPM / TPM')
+                        : t('未达成 SLA：未能测得最大可持续 RPM / TPM（或成功率低于阈值）')];
+                }
+
+                let configText = t('（无配置数据）');
+                if (config != null) {
+                    configText = typeof config === 'object' ? JSON.stringify(config, null, 2) : String(config);
+                }
+
+                const html = `
+                    <!-- 基础信息 -->
+                    <div class="card">
+                        <div class="card-head-row mb-4">
+                            <div>
+                                <div class="card-title">
+                                    ${t('测试详情')}
+                                    <span class="badge ${modeBadge}">${esc(modeText)}</span>
+                                    ${slaKnown ? `<span class="badge ${slaMet ? 'success' : 'danger'}">SLA ${slaMet ? t('达标') : t('未达标')}</span>` : ''}
+                                </div>
+                                <div class="card-desc" style="margin-bottom:0">${t('记录')} #${esc(record.id)} · ${esc(record.model_name)}</div>
+                            </div>
+                            <div class="head-actions">
+                                <a class="btn btn-ghost btn-sm" href="/history">${t('返回列表')}</a>
+                                <button class="btn btn-ghost btn-sm" id="btn-export-json">${t('导出 JSON')}</button>
+                                <button class="btn btn-ghost btn-sm" id="btn-export-csv">${t('导出 CSV')}</button>
+                                <button class="btn btn-ghost btn-sm" id="btn-export-pdf">${t('导出 PDF')}</button>
+                                <button class="btn btn-ghost btn-sm" id="btn-export-excel">${t('导出 Excel')}</button>
+                                <button class="btn btn-danger btn-sm" id="btn-delete">${Layout.icons.trash}${t('删除')}</button>
+                            </div>
+                        </div>
+                        <div class="info-grid">
+                            ${infoItem('Base URL', `<span class="mono">${esc(record.test_url)}</span>`)}
+                            ${infoItem(t('模型名称'), `<span class="strong">${esc(record.model_name)}</span>`)}
+                            ${infoItem(t('压测模式'), `<span class="badge ${modeBadge}">${esc(modeText)}</span>`)}
+                            ${infoItem(t('请求方式'), requestTypeText)}
+                            ${infoItem(t('请求模式'), esc(promptModeText))}
+                            ${infoItem(t('开始时间'), fmtDT(record.start_time, true))}
+                            ${infoItem(t('结束时间'), fmtDT(record.end_time, true))}
+                            ${infoItem(t('测试时长'), `<span class="strong text-accent">${fmtDuration(record.duration)}</span>`)}
+                            ${infoItem(isRampMode ? t('最大可持续 RPM') : t('目标 RPM'), `<span class="strong text-accent">${fmtInt(record.max_rpm || record.target_rpm)}</span>`)}
+                            ${(Number(record.concurrency) > 0) ? infoItem(t('并发路数（峰值）'), fmtInt(Number(record.peak_concurrency) || Number(record.concurrency))) : ''}
+                            ${infoItem(t('请求复用率 目标 / 实际'), `${fmtRatio(record.prompt_reuse_ratio)} / ${fmtRatio(record.actual_prompt_reuse_ratio)}`)}
+                            ${infoItem(t('停止原因'), esc(record.stop_reason || t('手动停止')))}
+                        </div>
+                    </div>
+
+                    <!-- 核心指标 -->
+                    <div class="stat-grid mt-4">
+                        ${statCard(t('总请求数'), fmtInt(record.total_requests), 'accent')}
+                        ${statCard(t('成功率'), `${rate}%`, rate >= 90 ? 'good' : rate >= 70 ? 'warn' : 'bad')}
+                        ${statCard(t('成功次数'), fmtInt(record.success_count), 'good')}
+                        ${statCard(t('失败次数'), fmtInt(record.failure_count), 'bad')}
+                        ${statCard(t('平均响应时间'), fmtMs(record.avg_response_time), 'warn')}
+                        ${totalTokens > 0 ? statCard(t('累计 Token'), fmtTokens(totalTokens), 'accent') : ''}
+                        ${totalTokens > 0 ? statCard(t('平均 TPM'), fmtInt(record.avg_tpm), 'accent', t('tokens/分')) : ''}
+                        ${record.estimated_cost != null ? statCard(t('预估成本（本轮）'), '¥' + Number(record.estimated_cost).toFixed(4), 'warn') : ''}
+                    </div>
+
+                    <!-- 延迟分位数 -->
+                    <div class="card mt-4">
+                        <div class="card-title">${t('延迟分位数')}</div>
+                        <div class="card-desc">${t('端到端耗时与流式输出体验')}</div>
+                        <div class="stat-grid">
+                            ${statCard(t('端到端 P50'), fmtMs(record.p50_response_time), 'accent')}
+                            ${statCard(t('端到端 P95'), fmtMs(record.p95_response_time), 'warn')}
+                            ${statCard(t('端到端 P99'), fmtMs(record.p99_response_time), 'bad')}
+                            ${statCard(t('首字节 TTFB P95'), fmtMs(record.ttfb_p95), 'accent')}
+                            ${statCard('TPOT P95', fmtMs(record.tpot_p95), 'accent', t('ms/输出token'))}
+                        </div>
+                    </div>
+
+                    ${hasEval ? `
+                    <!-- 评估结果 -->
+                    <div class="card mt-4">
+                        <div class="card-title">${t('评估结果')}</div>
+                        <div class="card-desc">${t('压测过程测得的最大可持续吞吐与建议承载档位')}</div>
+                        <div class="stat-grid">
+                            ${statCard(t('最大可持续 RPM'), maxRpm ? fmtInt(maxRpm) : '-', 'accent')}
+                            ${statCard(t('最大可持续 TPM（输出）'), maxTpm ? fmtInt(maxTpm) : '-', 'accent')}
+                            ${statCard(t('建议承载 RPM'), recRpm ? fmtInt(recRpm) : '-', 'good')}
+                            ${statCard(t('建议承载 TPM'), recTpm ? fmtInt(recTpm) : '-', 'good')}
+                        </div>
+                    </div>` : ''}
+
+                    ${slaKnown ? `
+                    <!-- SLA 结论 -->
+                    <div class="card mt-4">
+                        <div class="card-head-row">
+                            <div>
+                                <div class="card-title">${t('SLA 结论')}</div>
+                                <div class="card-desc" style="margin-bottom:0">${t('基于压测测得的最大可持续吞吐判定')}</div>
+                            </div>
+                            <div class="head-actions">
+                                <span class="badge ${slaMet ? 'success' : 'danger'}" style="font-size:var(--fs-md);padding:6px 16px">${slaMet ? t('✓ SLA 达标') : t('✕ SLA 未达标')}</span>
+                            </div>
+                        </div>
+                        ${slaReasons.length ? `<ul class="sla-reasons">${slaReasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+                    </div>` : ''}
+
+                    ${totalTokens > 0 ? `
+                    <!-- Token 吞吐 -->
+                    <div class="card mt-4">
+                        <div class="card-title">${t('Token 吞吐（输入 / 输出拆分）')}</div>
+                        <div class="card-desc">${t('吞吐速率与累计消耗')}</div>
+                        <div class="stat-grid">
+                            ${statCard(t('平均输入 TPM'), fmtInt(record.input_tpm), 'accent')}
+                            ${statCard(t('平均输出 TPM'), fmtInt(record.output_tpm), 'good')}
+                            ${statCard(t('累计输入 Token'), fmtInt(record.total_prompt_tokens), 'accent')}
+                            ${statCard(t('累计输出 Token'), fmtInt(record.total_completion_tokens), 'accent')}
+                        </div>
+                    </div>` : ''}
+
+                    ${trendChartsHtml}
+
+                    <!-- 分钟统计 -->
+                    <div class="card mt-4">
+                        <div class="card-title">${t('分钟统计')}</div>
+                        <div class="card-desc">${t('每分钟成功 / 失败与吞吐明细，共')} ${fmtInt(minuteStats.length)} ${t('分钟')}</div>
+                        ${minuteStats.length ? `
+                        <div class="table-wrap" style="max-height:460px;overflow-y:auto">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>${t('时间')}</th>
+                                        <th class="num">${t('请求数')}</th>
+                                        <th class="num">${t('成功')}</th>
+                                        <th class="num">${t('失败')}</th>
+                                        <th class="num">${t('成功率')}</th>
+                                        <th class="num">${t('平均耗时')}</th>
+                                        <th class="num">RPM</th>
+                                        <th class="num">Token</th>
+                                        <th class="num">TPM</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${minuteStats.map((m) => `
+                                        <tr>
+                                            <td>${fmtDT(m.timestamp, true)}</td>
+                                            <td class="num">${fmtInt(m.totalRequests)}</td>
+                                            <td class="num text-success">${fmtInt(m.successCount)}</td>
+                                            <td class="num text-danger">${fmtInt(m.failureCount)}</td>
+                                            <td class="num"><span class="${rateClass(m.successRate)}" style="font-weight:600">${fmtPct(m.successRate, 1)}</span></td>
+                                            <td class="num">${m.avgResponseTime != null ? fmtMs(m.avgResponseTime) : '-'}</td>
+                                            <td class="num">${fmtInt(m.rpm)}</td>
+                                            <td class="num">${fmtTokens(m.tokens)}</td>
+                                            <td class="num">${fmtInt(m.tpm)}</td>
+                                        </tr>`).join('')}
+                                </tbody>
+                            </table>
+                        </div>` : `<div class="empty-state">${Layout.icons.empty}<div class="e-title">${t('无分钟统计数据')}</div></div>`}
+                    </div>
+
+                    <!-- 错误汇总 -->
+                    <div class="card mt-4">
+                        <div class="card-title">${t('错误汇总')}</div>
+                        <div class="card-desc">${t('按出现次数降序排列')}</div>
+                        <div id="error-box"></div>
+                    </div>
+
+                    <!-- 原始配置 -->
+                    <div class="card mt-4">
+                        <div class="card-title">${t('原始配置')}</div>
+                        <div class="card-desc">${t('该次压测提交的完整 testConfig')}</div>
+                        <details class="raw-config">
+                            <summary>${t('展开 / 收起配置 JSON')}</summary>
+                            <pre class="mono">${esc(configText)}</pre>
+                        </details>
+                    </div>
+                `;
+
+                const content = document.getElementById('page-content');
+                content.innerHTML = html;
+
+                // 错误汇总渲染
+                const errBox = content.querySelector('#error-box');
+                const errEntries = Object.entries(errorSummary).sort((a, b) => b[1] - a[1]);
+                errBox.innerHTML = errEntries.length
+                    ? errEntries.map(([msg, count]) => `
+                        <div class="err-row">
+                            <div class="err-msg">${esc(msg)}</div>
+                            <span class="badge danger err-count">${fmtInt(count)} ${t('次')}</span>
+                        </div>`).join('')
+                    : `<div class="empty-state">${Layout.icons.check}<div class="e-title">${t('无错误记录')}</div></div>`;
+
+                bindActions();
+            }
+
+            function bindActions() {
+                const on = (id, fn) => {
+                    const el = document.getElementById(id);
+                    if (el) el.addEventListener('click', () => withLoading(el, fn));
+                };
+                on('btn-export-json', () => exportAs('json'));
+                on('btn-export-csv', () => exportAs('csv'));
+                on('btn-export-pdf', () => exportAs('pdf'));
+                on('btn-export-excel', () => exportAs('excel'));
+
+                const del = document.getElementById('btn-delete');
+                if (del) del.addEventListener('click', deleteRecord);
+            }
+
+            async function exportAs(fmt) {
+                try {
+                    await API.download(`/api/history/${historyId}/export/${fmt}`, `llm-api-eval_export_${historyId}.${fmt}`);
+                    toast.success(fmt.toUpperCase() + t(' 导出成功'));
+                } catch (e) {
+                    toast.error(t('导出失败：') + e.message);
+                }
+            }
+
+            async function deleteRecord() {
+                const ok = await Layout.confirmDialog(t('确定要<b>删除这条测试记录</b>吗？删除后不可恢复。'), { danger: true, okText: t('删除') });
+                if (!ok) return;
+                try {
+                    await API.del(`/api/history/${historyId}`);
+                    toast.success(t('记录已删除'));
+                    setTimeout(() => { window.location.href = '/history'; }, 500);
+                } catch (e) {
+                    toast.error(t('删除失败：') + e.message);
+                }
+            }
+
+            Layout.init({ active: 'history', title: t('测试详情'), sub: t('单次压测完整报告') }).then(() => {
+                load();
+            });
+        })();
+    </script>
+</body>
+</html>

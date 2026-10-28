@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>并行压测 · LLM-API-Eval</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <style>
+        /* ===== 页面专属样式 ===== */
+        .config-list { display: flex; flex-direction: column; gap: 12px; }
+
+        .config-item {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--r-md);
+            overflow: hidden;
+        }
+        .config-item .ci-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 11px 16px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        .config-item .ci-head:hover { background: var(--surface-3); }
+        .ci-num { font-weight: 600; color: #22d3ee; font-size: var(--fs-md); white-space: nowrap; }
+        .ci-model { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--text-3); text-align: right; }
+        .ci-arrow { color: var(--text-3); transition: transform 0.2s; flex-shrink: 0; font-size: var(--fs-sm); }
+        .config-item.collapsed .ci-arrow { transform: rotate(-90deg); }
+        .config-item.collapsed .ci-body { display: none; }
+        .ci-body { padding: 14px 16px 16px; border-top: 1px solid var(--border); }
+
+        .tcards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 14px;
+        }
+        .tcard {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--r-md);
+            padding: 16px;
+        }
+        .kv { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-sm); padding: 2px 0; }
+        .kv .k { color: var(--text-3); flex-shrink: 0; }
+        .kv .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+        .tstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+        .tstat { background: var(--bg-deep); border-radius: var(--r-sm); padding: 9px 4px; text-align: center; }
+        .tstat .tv { font-size: var(--fs-lg); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.3; }
+        .tstat .tl { font-size: var(--fs-xs); color: var(--text-3); }
+
+        .rpm-line {
+            display: flex;
+            justify-content: space-between;
+            font-size: var(--fs-xs);
+            color: var(--text-3);
+            margin: 12px 0 5px;
+        }
+
+        .row-best td { background: rgba(52, 211, 153, 0.07); }
+        .row-worst td { background: rgba(248, 113, 113, 0.07); }
+
+        .mb-0 { margin-bottom: 0; }
+        .dot.accent { background: var(--primary); box-shadow: 0 0 6px rgba(6, 182, 212, 0.5); }
+    </style>
+</head>
+<body data-page="parallel">
+<div id="page-content">
+    <!-- 他人占用横幅 -->
+    <div class="note warning mb-3 hidden" id="otherBanner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="flex-1">其他用户正在并行压测，数据互不可见，当前无法启动新的测试。</div>
+        <button type="button" class="btn btn-danger btn-sm hidden" id="forceStopBtn">强制停止</button>
+    </div>
+
+    <!-- 配置区域 -->
+    <div class="card" id="configCard">
+        <div class="card-head-row mb-3">
+            <div>
+                <div class="card-title mb-0"><span class="dot accent"></span>测试配置</div>
+                <div class="card-desc mb-0 mt-2">同时压测最多 5 个 API 端点，横向对比不同接口协议与模型的性能表现，结束后自动生成对比结果。</div>
+            </div>
+            <div class="head-actions">
+                <button type="button" class="btn btn-success btn-sm" id="addConfigBtn">+ 添加配置</button>
+            </div>
+        </div>
+        <div class="config-list" id="configList"></div>
+    </div>
+
+    <!-- 控制按钮 -->
+    <div class="card">
+        <div class="flex gap-3 flex-wrap">
+            <button type="button" class="btn btn-primary btn-lg" id="startBtn">启动并行测试</button>
+            <button type="button" class="btn btn-danger btn-lg" id="stopBtn" disabled>停止测试</button>
+            <span class="muted flex items-center" style="font-size:var(--fs-sm)" id="ctrlHint">至少填写每组配置的 Base URL、模型名称与 API Key</span>
+        </div>
+    </div>
+
+    <!-- 运行状态 -->
+    <div class="card hidden" id="statusCard">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <div class="card-title mb-0"><span class="dot muted" id="runDot"></span><span id="statusText">准备就绪</span></div>
+            <span class="mono text-accent" id="elapsed" style="font-size:var(--fs-xl)">00:00:00</span>
+        </div>
+        <div class="stat-grid" id="overviewStats"></div>
+        <div class="divider"></div>
+        <div class="tcards" id="testCardsGrid"></div>
+    </div>
+
+    <!-- 结果对比 -->
+    <div class="card hidden" id="compareCard">
+        <div class="card-title">结果对比</div>
+        <div class="card-desc">按成功率标记最佳 / 最差配置</div>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>配置</th>
+                        <th>模型</th>
+                        <th>接口协议</th>
+                        <th class="num">总请求</th>
+                        <th class="num">成功率</th>
+                        <th class="num">平均响应</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody id="comparisonBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script src="/assets/js/i18n.js"></script>
+<script src="/assets/js/i18n/en.common.js"></script>
+<script src="/assets/js/i18n/en.parallel.js"></script>
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ws.js"></script>
+<script src="/assets/js/layout.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    const MAX_CONFIGS = 5;
+    const DEFAULT_PROMPT = t('请用两三句话介绍一下你自己。');
+
+    const PROVIDERS = {
+        openai: { name: 'OpenAI', urlHint: t('https://api.openai.com 或兼容协议网关'), modelHint: 'gpt-4o, gpt-4o-mini, gpt-3.5-turbo', urlPh: 'https://api.openai.com', modelPh: 'gpt-4o' },
+        responses: { name: 'OpenAI Responses', urlHint: t('https://api.openai.com（/v1/responses）'), modelHint: 'gpt-4o, gpt-4o-mini', urlPh: 'https://api.openai.com', modelPh: 'gpt-4o' },
+        anthropic: { name: 'Anthropic', urlHint: t('https://api.anthropic.com 或兼容协议网关'), modelHint: t('claude-3-5-sonnet-20241022 等'), urlPh: 'https://api.anthropic.com', modelPh: 'claude-3-5-sonnet-20241022' },
+        gemini: { name: 'Gemini', urlHint: 'https://generativelanguage.googleapis.com', modelHint: 'gemini-1.5-flash, gemini-1.5-pro', urlPh: 'https://generativelanguage.googleapis.com', modelPh: 'gemini-1.5-flash' }
+    };
+
+    const STATUS_MAP = { pending: t('等待中'), running: t('运行中'), completed: t('已完成'), failed: t('失败'), stopped: t('已停止') };
+    const STATUS_BADGE = { pending: 'muted', running: 'success', completed: 'accent', failed: 'danger', stopped: 'warning' };
+
+    let currentUser = null;
+    let ws = null;
+    let viewState = 'idle'; // idle | running | other
+    let startTime = null;
+    let timerInterval = null;
+    let pollInterval = null;
+    let configSeq = 0;
+
+    // ---------- DOM ----------
+    const $ = (id) => document.getElementById(id);
+    const els = {};
+
+    function bindStaticEvents() {
+        $('addConfigBtn').addEventListener('click', addConfig);
+        $('startBtn').addEventListener('click', startParallelTest);
+        $('stopBtn').addEventListener('click', () => stopParallel(false));
+        $('forceStopBtn').addEventListener('click', async () => {
+            if (await Layout.confirmDialog(t('当前并行测试由其他用户启动，确定强制停止吗？'), { danger: true, okText: t('强制停止'), title: t('强制停止') })) {
+                stopParallel(true);
+            }
+        });
+    }
+
+    // ---------- 配置组编辑器 ----------
+    function configCount() {
+        return els.configList.querySelectorAll('.config-item').length;
+    }
+
+    function addConfig() {
+        if (configCount() >= MAX_CONFIGS) {
+            toast.warning(`${t('最多只能添加')} ${MAX_CONFIGS} ${t('个配置')}`);
+            return;
+        }
+        els.configList.appendChild(buildConfigCard());
+        renumberConfigs();
+        updateAddBtn();
+    }
+
+    function removeConfig(node) {
+        if (configCount() <= 1) {
+            toast.warning(t('至少需要保留一个配置'));
+            return;
+        }
+        node.remove();
+        renumberConfigs();
+        updateAddBtn();
+    }
+
+    function renumberConfigs() {
+        els.configList.querySelectorAll('.config-item').forEach((el, i) => {
+            el.querySelector('.ci-num').textContent = `${t('配置')} ${i + 1}`;
+        });
+    }
+
+    function updateAddBtn() {
+        const n = configCount();
+        const btn = els.addConfigBtn;
+        btn.disabled = n >= MAX_CONFIGS || viewState === 'running';
+        btn.textContent = n >= MAX_CONFIGS ? `${t('已达上限')} (${n}/${MAX_CONFIGS})` : `+ ${t('添加配置')} (${n}/${MAX_CONFIGS})`;
+    }
+
+    function buildConfigCard() {
+        const el = document.createElement('div');
+        el.className = 'config-item';
+        el.innerHTML = `
+            <div class="ci-head" data-role="head">
+                <span class="ci-arrow">▾</span>
+                <span class="ci-num"></span>
+                <span class="badge warning" data-role="ready">${t('未完成')}</span>
+                <span class="ci-model ellipsis" data-role="summary"></span>
+                <button type="button" class="btn btn-danger btn-sm" data-role="remove">${t('删除')}</button>
+            </div>
+            <div class="ci-body">
+                <div class="form-grid">
+                    <div class="field">
+                        <label class="req">${t('接口协议')}</label>
+                        <select class="select" data-f="providerType">
+                            <option value="openai">${t('OpenAI 接口')}</option>
+                            <option value="responses">${t('OpenAI Responses 接口')}</option>
+                            <option value="anthropic">${t('Anthropic 接口')}</option>
+                            <option value="gemini">${t('Gemini 接口')}</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="req">Base URL</label>
+                        <input class="input" data-f="url" placeholder="https://api.openai.com">
+                        <span class="hint" data-role="urlHint"></span>
+                    </div>
+                    <div class="field">
+                        <label class="req">${t('模型名称')}</label>
+                        <input class="input" data-f="modelName" placeholder="gpt-4o">
+                        <span class="hint" data-role="modelHint"></span>
+                    </div>
+                    <div class="field">
+                        <label class="req">API Key</label>
+                        <input class="input" type="password" data-f="apiKey" placeholder="sk-..." autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label>${t('请求方式')}</label>
+                        <select class="select" data-f="requestType">
+                            <option value="stream">${t('流式请求')}</option>
+                            <option value="non-stream">${t('非流式请求')}</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>${t('目标 RPM')}</label>
+                        <input class="input" type="number" data-f="rpm" value="60" min="1" max="100000">
+                    </div>
+                    <div class="field">
+                        <label>${t('测试时长（分钟）')}</label>
+                        <input class="input" type="number" data-f="testDuration" value="5" min="0" max="1440">
+                        <span class="hint">${t('0 = 不限时')}</span>
+                    </div>
+                    <div class="field span-2">
+                        <label>${t('测试请求')}</label>
+                        <input class="input" data-f="testPrompt" value="${DEFAULT_PROMPT}" placeholder="${t('输入测试请求')}">
+                    </div>
+                </div>
+            </div>`;
+
+        el.querySelector('[data-role="head"]').addEventListener('click', (e) => {
+            if (e.target.closest('button')) return;
+            el.classList.toggle('collapsed');
+        });
+        el.querySelector('[data-role="remove"]').addEventListener('click', () => removeConfig(el));
+        el.querySelectorAll('[data-f]').forEach((inp) => {
+            inp.addEventListener('input', () => refreshCardState(el));
+            inp.addEventListener('change', () => {
+                if (inp.dataset.f === 'providerType') applyHints(el);
+                refreshCardState(el);
+            });
+        });
+
+        applyHints(el);
+        refreshCardState(el);
+        return el;
+    }
+
+    function applyHints(el) {
+        const p = PROVIDERS[el.querySelector('[data-f="providerType"]').value] || PROVIDERS.openai;
+        el.querySelector('[data-role="urlHint"]').textContent = `${t('示例：')}${p.urlHint}`;
+        el.querySelector('[data-role="modelHint"]').textContent = `${t('示例：')}${p.modelHint}`;
+        el.querySelector('[data-f="url"]').placeholder = p.urlPh;
+        el.querySelector('[data-f="modelName"]').placeholder = p.modelPh;
+    }
+
+    function readFields(el) {
+        const get = (name) => {
+            const node = el.querySelector(`[data-f="${name}"]`);
+            return node ? node.value.trim() : '';
+        };
+        return {
+            providerType: get('providerType'),
+            url: get('url'),
+            modelName: get('modelName'),
+            apiKey: get('apiKey'),
+            requestType: get('requestType') || 'stream',
+            rpm: parseInt(get('rpm'), 10) || 60,
+            testDuration: parseInt(get('testDuration'), 10) || 0,
+            testPrompt: get('testPrompt')
+        };
+    }
+
+    function refreshCardState(el) {
+        const v = readFields(el);
+        const ready = !!(v.url && v.modelName && v.apiKey);
+        const badge = el.querySelector('[data-role="ready"]');
+        badge.className = 'badge ' + (ready ? 'success' : 'warning');
+        badge.textContent = ready ? t('就绪') : t('未完成');
+        el.querySelector('[data-role="summary"]').textContent = v.modelName ? `${PROVIDERS[v.providerType].name} · ${v.modelName}` : '';
+    }
+
+    function collectConfigs() {
+        const list = els.configList.querySelectorAll('.config-item');
+        const out = [];
+        list.forEach((el, i) => {
+            const v = readFields(el);
+            if (!v.url || !v.modelName || !v.apiKey) {
+                el.classList.remove('collapsed');
+                throw new Error(`${t('配置')} ${i + 1}${t('：请完整填写 Base URL、模型名称和 API Key')}`);
+            }
+            out.push({
+                url: v.url,
+                modelName: v.modelName,
+                apiKey: v.apiKey,
+                providerType: v.providerType,
+                requestType: v.requestType,
+                rpm: v.rpm,
+                testDuration: v.testDuration,
+                testPrompt: v.testPrompt || DEFAULT_PROMPT,
+                promptMode: 'fixed'
+            });
+        });
+        return out;
+    }
+
+    // ---------- 启动 / 停止 ----------
+    async function startParallelTest() {
+        let configs;
+        try {
+            configs = collectConfigs();
+        } catch (e) {
+            toast.warning(e.message);
+            return;
+        }
+        els.startBtn.disabled = true;
+        try {
+            const data = await API.post('/api/parallel/start', { configs });
+            toast.success(t('并行测试已启动'));
+            handleTestStarted(data);
+        } catch (e) {
+            setRunningUI(false);
+            toast.error(t('启动并行测试失败：') + e.message);
+        }
+    }
+
+    async function stopParallel(force) {
+        try {
+            const data = await API.post('/api/parallel/stop', force ? { force: true } : {});
+            toast.success(t('并行测试已停止'));
+            handleTestStopped(data);
+        } catch (e) {
+            if (e.status === 403 && e.data && e.data.ownerMismatch) {
+                if (currentUser && currentUser.role === 'admin') {
+                    if (await Layout.confirmDialog(t('当前并行测试由其他用户启动，是否强制停止？'), { danger: true, okText: t('强制停止'), title: t('权限确认') })) {
+                        stopParallel(true);
+                    }
+                } else {
+                    toast.error(e.message || t('当前并行测试由其他用户启动，你的停止请求未生效'));
+                }
+            } else {
+                toast.error(t('停止并行测试失败：') + e.message);
+            }
+        }
+    }
+
+    // ---------- 状态渲染 ----------
+    function setRunningUI(running) {
+        els.startBtn.disabled = running;
+        els.stopBtn.disabled = !running;
+        updateAddBtn();
+        els.ctrlHint.classList.toggle('hidden', running);
+    }
+
+    function statusBadge(status) {
+        const cls = STATUS_BADGE[status] || 'muted';
+        const text = STATUS_MAP[status] || status;
+        return `<span class="badge ${cls}">${esc(text)}</span>`;
+    }
+
+    function renderAll(tests) {
+        renderTestCards(tests || []);
+        renderOverview(tests || []);
+    }
+
+    function renderOverview(tests) {
+        if (!tests.length) {
+            els.overviewStats.innerHTML = '';
+            return;
+        }
+        const totalReq = tests.reduce((s, t) => s + (t.stats.totalRequests || 0), 0);
+        const successReq = tests.reduce((s, t) => s + (t.stats.totalRequests || 0) * (t.stats.successRate || 0), 0) / (totalReq || 1);
+        const avgMs = tests.reduce((s, t) => s + (t.stats.avgResponseTime || 0), 0) / tests.length;
+        const running = tests.filter((t) => t.status === 'running').length;
+        els.overviewStats.innerHTML = `
+            <div class="stat-card accent"><div class="stat-label">${t('测试组数')}</div><div class="stat-value">${tests.length}<span class="stat-unit">/ ${MAX_CONFIGS}</span></div><div class="stat-foot">${running ? `${running} ${t('组运行中')}` : t('全部结束')}</div></div>
+            <div class="stat-card"><div class="stat-label">${t('总请求数')}</div><div class="stat-value">${fmtInt(totalReq)}</div><div class="stat-foot">${t('全部配置合计')}</div></div>
+            <div class="stat-card ${successReq >= 95 ? 'good' : successReq >= 80 ? 'warn' : 'bad'}"><div class="stat-label">${t('加权成功率')}</div><div class="stat-value">${fmtPct(successReq)}</div><div class="stat-foot">${t('按请求数加权')}</div></div>
+            <div class="stat-card warn"><div class="stat-label">${t('平均响应')}</div><div class="stat-value">${fmtMs(avgMs)}</div><div class="stat-foot">${t('各组均值')}</div></div>`;
+    }
+
+    function renderTestCards(tests) {
+        els.testCardsGrid.innerHTML = tests.map((test, index) => {
+            const c = test.config || {};
+            const s = test.stats || {};
+            const target = c.rpm || 0;
+            const pct = target > 0 ? Math.min(100, ((s.currentRPM || 0) / target) * 100) : 0;
+            const rateCls = (s.successRate || 0) >= 95 ? 'text-success' : (s.successRate || 0) >= 80 ? 'text-warning' : 'text-danger';
+            return `
+            <div class="tcard" id="ptc-${test.testId}" data-rpm="${target}">
+                <div class="flex items-center justify-between gap-2 mb-2">
+                    <div class="ellipsis" style="font-weight:600">${t('测试')} ${index + 1} · ${esc(c.modelName || '-')}</div>
+                    ${statusBadge(test.status)}
+                </div>
+                <div class="kv"><span class="k">${t('接口协议')}</span><span class="v">${esc(providerName(c.providerType))}</span></div>
+                <div class="kv"><span class="k">Base URL</span><span class="v" title="${esc(c.url || '')}">${esc(c.url || '-')}</span></div>
+                <div class="kv"><span class="k">${t('目标 RPM')}</span><span class="v">${c.rpm != null ? fmtInt(c.rpm) : '-'}${c.testDuration ? ` · ${c.testDuration} ${t('分钟')}` : ''}</span></div>
+                <div class="tstats">
+                    <div class="tstat"><div class="tv text-accent" data-s="total">${fmtInt(s.totalRequests)}</div><div class="tl">${t('总请求')}</div></div>
+                    <div class="tstat"><div class="tv ${rateCls}" data-s="rate">${fmtPct(s.successRate)}</div><div class="tl">${t('成功率')}</div></div>
+                    <div class="tstat"><div class="tv text-warning" data-s="avg">${fmtMs(s.avgResponseTime)}</div><div class="tl">${t('平均响应')}</div></div>
+                    <div class="tstat"><div class="tv text-accent" data-s="rpm">${fmtInt(s.currentRPM)}</div><div class="tl">${t('当前 RPM')}</div></div>
+                </div>
+                <div class="rpm-line"><span>${t('RPM 进度')}</span><span data-s="rpmlabel">${fmtInt(s.currentRPM)} / ${target > 0 ? fmtInt(target) : '-'}</span></div>
+                <div class="progress thin"><div class="bar" data-s="rpmbar" style="width:${pct.toFixed(1)}%"></div></div>
+            </div>`;
+        }).join('');
+    }
+
+    function updateTestCard(testId, stats, status) {
+        const card = document.getElementById('ptc-' + testId);
+        if (!card) return;
+        const s = stats || {};
+        const badgeEl = card.querySelector('.badge');
+        if (badgeEl && status) {
+            badgeEl.className = 'badge ' + (STATUS_BADGE[status] || 'muted');
+            badgeEl.textContent = STATUS_MAP[status] || status;
+        }
+        const target = parseInt(card.dataset.rpm, 10) || 0;
+        const totalEl = card.querySelector('[data-s="total"]');
+        const rateEl = card.querySelector('[data-s="rate"]');
+        const avgEl = card.querySelector('[data-s="avg"]');
+        const rpmEl = card.querySelector('[data-s="rpm"]');
+        const labelEl = card.querySelector('[data-s="rpmlabel"]');
+        const barEl = card.querySelector('[data-s="rpmbar"]');
+        if (totalEl) totalEl.textContent = fmtInt(s.totalRequests);
+        if (rateEl) {
+            rateEl.textContent = fmtPct(s.successRate);
+            rateEl.className = 'tv ' + ((s.successRate || 0) >= 95 ? 'text-success' : (s.successRate || 0) >= 80 ? 'text-warning' : 'text-danger');
+        }
+        if (avgEl) avgEl.textContent = fmtMs(s.avgResponseTime);
+        if (rpmEl) rpmEl.textContent = fmtInt(s.currentRPM);
+        if (labelEl) labelEl.textContent = `${fmtInt(s.currentRPM)} / ${target > 0 ? fmtInt(target) : '-'}`;
+        if (barEl) barEl.style.width = (target > 0 ? Math.min(100, ((s.currentRPM || 0) / target) * 100) : 0).toFixed(1) + '%';
+    }
+
+    function renderComparison(tests) {
+        if (!tests || tests.length === 0) return;
+        let bestIdx = 0, worstIdx = 0;
+        tests.forEach((t, i) => {
+            if (t.stats.successRate > tests[bestIdx].stats.successRate) bestIdx = i;
+            if (t.stats.successRate < tests[worstIdx].stats.successRate) worstIdx = i;
+        });
+        els.comparisonBody.innerHTML = tests.map((test, i) => {
+            const c = test.config || {};
+            let badge = '';
+            let rowCls = '';
+            if (tests.length > 1) {
+                if (i === bestIdx) { rowCls = 'row-best'; badge = `<span class="badge success">${t('最佳')}</span>`; }
+                else if (i === worstIdx) { rowCls = 'row-worst'; badge = `<span class="badge danger">${t('最差')}</span>`; }
+            }
+            return `
+                <tr class="${rowCls}">
+                    <td>${t('配置')} ${i + 1} ${badge}</td>
+                    <td>${esc(c.modelName || '-')}</td>
+                    <td>${esc(providerName(c.providerType))}</td>
+                    <td class="num">${fmtInt(test.stats.totalRequests)}</td>
+                    <td class="num">${fmtPct(test.stats.successRate)}</td>
+                    <td class="num">${fmtMs(test.stats.avgResponseTime)}</td>
+                    <td>${statusBadge(test.status)}</td>
+                </tr>`;
+        }).join('');
+        els.compareCard.classList.remove('hidden');
+    }
+
+    function providerName(t) {
+        const map = { openai: 'OpenAI', responses: 'OpenAI Responses', 'openai-responses': 'OpenAI Responses', anthropic: 'Anthropic', claude: 'Anthropic', gemini: 'Gemini' };
+        return map[t] || t || '-';
+    }
+
+    // ---------- 计时 ----------
+    function fmtHMS(ms) {
+        const s = Math.max(0, Math.floor(ms / 1000));
+        const p = (n) => String(n).padStart(2, '0');
+        return `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}`;
+    }
+
+    function startTimer() {
+        stopTimer();
+        els.elapsed.textContent = '00:00:00';
+        timerInterval = setInterval(() => {
+            if (!startTime) return;
+            els.elapsed.textContent = fmtHMS(Date.now() - startTime.getTime());
+        }, 1000);
+    }
+
+    function stopTimer() {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+    }
+
+    // ---------- 状态流转 ----------
+    function handleTestStarted(data) {
+        viewState = 'running';
+        startTime = data && data.startTime ? new Date(data.startTime) : new Date();
+        els.statusText.textContent = t('并行测试运行中');
+        els.runDot.className = 'dot success pulse';
+        els.configCard.classList.add('hidden');
+        els.compareCard.classList.add('hidden');
+        els.statusCard.classList.remove('hidden');
+        els.otherBanner.classList.add('hidden');
+        setRunningUI(true);
+        renderAll(data && data.tests);
+        startTimer();
+    }
+
+    function handleTestStopped(data) {
+        finishRun(t('测试已停止'), data);
+    }
+
+    function handleAllCompleted(data) {
+        finishRun(t('所有测试已完成'), data);
+    }
+
+    function finishRun(text, data) {
+        viewState = 'idle';
+        stopTimer();
+        els.statusText.textContent = text;
+        els.runDot.className = 'dot muted';
+        setRunningUI(false);
+        els.configCard.classList.remove('hidden');
+        els.otherBanner.classList.add('hidden');
+        if (data && Array.isArray(data.tests) && data.tests.length) {
+            renderAll(data.tests);
+            renderComparison(data.tests);
+        }
+    }
+
+    function enterOtherState() {
+        viewState = 'other';
+        stopTimer();
+        els.otherBanner.classList.remove('hidden');
+        els.forceStopBtn.classList.toggle('hidden', !(currentUser && currentUser.role === 'admin'));
+        els.statusCard.classList.add('hidden');
+        els.compareCard.classList.add('hidden');
+        els.configCard.classList.remove('hidden');
+        els.startBtn.disabled = true;
+        els.stopBtn.disabled = true;
+        els.addConfigBtn.disabled = true;
+        els.statusText.textContent = t('其他用户压测中');
+        els.runDot.className = 'dot warning pulse';
+    }
+
+    function enterIdleState() {
+        viewState = 'idle';
+        els.otherBanner.classList.add('hidden');
+        stopTimer();
+        setRunningUI(false);
+        els.statusText.textContent = t('准备就绪');
+        els.runDot.className = 'dot muted';
+    }
+
+    // ---------- 状态查询 / 轮询 ----------
+    async function refreshStatus() {
+        let data;
+        try {
+            data = await API.get('/api/parallel/status');
+        } catch (e) {
+            return;
+        }
+        if (!data) return;
+
+        if ((data.owner || null) === 'other') {
+            if (viewState !== 'other') enterOtherState();
+            return;
+        }
+        if (data.isRunning) {
+            if (viewState === 'running') {
+                // WS 断线时兜底刷新，不做整卡重绘
+                (data.tests || []).forEach((t) => updateTestCard(t.testId, t.stats, t.status));
+                renderOverview(data.tests || []);
+            } else {
+                handleTestStarted(data);
+            }
+            return;
+        }
+        if (viewState === 'running') {
+            // 错过停止/完成事件时兜底收尾
+            finishRun(t('测试已结束'), data);
+        } else if (viewState === 'other') {
+            enterIdleState();
+        }
+    }
+
+    // ---------- 初始化 ----------
+    Layout.init({ active: 'parallel', title: '并行压测' }).then((user) => {
+        currentUser = user;
+        ['otherBanner', 'forceStopBtn', 'configCard', 'configList', 'addConfigBtn', 'startBtn', 'stopBtn', 'ctrlHint', 'statusCard', 'runDot', 'statusText', 'elapsed', 'overviewStats', 'testCardsGrid', 'compareCard', 'comparisonBody']
+            .forEach((id) => { els[id] = $(id); });
+
+        bindStaticEvents();
+        addConfig();
+
+        ws = createWS();
+        ws.on('parallelTestStarted', (d) => handleTestStarted(d));
+        ws.on('parallelTestUpdate', (d) => updateTestCard(d.testId, d.stats, d.status));
+        ws.on('parallelTestStopped', (d) => handleTestStopped(d));
+        ws.on('parallelTestAllCompleted', (d) => handleAllCompleted(d));
+
+        refreshStatus();
+        pollInterval = setInterval(refreshStatus, 8000);
+    });
+})();
+</script>
+</body>
+</html>

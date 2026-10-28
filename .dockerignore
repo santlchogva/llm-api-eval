@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log
+.env
+.git
+.gitignore
+.idea
+.vscode
+README.md
+ARTICLE.md
+.DS_Store
+data
+logs
+*.log
+*.db
+*.db-wal
+*.db-shm
+.screenshots

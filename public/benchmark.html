@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>速度测试 · LLM-API-Eval</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <style>
+        /* ===== 页面专属样式 ===== */
+        .phase-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 13px 16px;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--r-md);
+            margin-bottom: 10px;
+        }
+        .phase-row:last-child { margin-bottom: 0; }
+        .phase-icon {
+            width: 24px; height: 24px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: var(--fs-xs);
+            flex-shrink: 0;
+            background: var(--surface-3);
+            color: var(--text-2);
+        }
+        .phase-row.running .phase-icon {
+            border: 2px solid #22d3ee;
+            border-top-color: transparent;
+            background: transparent;
+            color: transparent;
+            animation: spin 0.8s linear infinite;
+        }
+        .phase-row.done .phase-icon { background: var(--success-soft); color: var(--success); }
+        .phase-name { font-weight: 600; font-size: var(--fs-md); }
+        .phase-desc { font-size: var(--fs-xs); color: var(--text-3); margin-top: 1px; }
+        .phase-detail {
+            margin-left: auto;
+            font-family: var(--mono);
+            font-size: var(--fs-sm);
+            color: #22d3ee;
+            text-align: right;
+        }
+
+        .bar-row {
+            display: grid;
+            grid-template-columns: 64px 1fr 110px;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            font-size: var(--fs-sm);
+        }
+        .bar-label { color: var(--text-3); }
+        .bar-track { height: 22px; background: var(--bg-deep); border-radius: 6px; overflow: hidden; }
+        .bar-fill { height: 100%; border-radius: 6px; background: var(--primary-grad); transition: width 0.4s ease; }
+        .bar-fill.alt { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+        .bar-fill.green { background: linear-gradient(90deg, #10b981, #34d399); }
+        .bar-value { text-align: right; font-family: var(--mono); }
+        .bar-sub { margin: -4px 0 8px 76px; font-size: var(--fs-xs); color: var(--text-3); }
+
+        .report-notes { font-size: var(--fs-sm); color: var(--text-2); line-height: 1.9; }
+        .json-pre {
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 52vh;
+            overflow: auto;
+            background: var(--bg-deep);
+            padding: 12px;
+            border-radius: var(--r-sm);
+            border: 1px solid var(--border);
+            font-size: var(--fs-xs);
+        }
+
+        .grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 900px) { .grid-2col { grid-template-columns: 1fr; } }
+        .sub-panel { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; min-width: 0; }
+
+        .mb-0 { margin-bottom: 0; }
+        .dot.accent { background: var(--primary); box-shadow: 0 0 6px rgba(6, 182, 212, 0.5); }
+        .hint { font-size: var(--fs-xs); color: var(--text-3); }
+    </style>
+</head>
+<body data-page="benchmark">
+<div id="page-content">
+    <!-- 他人占用横幅 -->
+    <div class="note warning mb-3 hidden" id="otherBanner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="flex-1">其他用户正在进行速度测试，已暂时隐藏测试表单，报告列表仍可查看。</div>
+        <button type="button" class="btn btn-danger btn-sm hidden" id="forceStopBtn">强制停止</button>
+    </div>
+
+    <!-- 配置 -->
+    <div class="card" id="configCard">
+        <div class="card-head-row">
+            <div>
+                <div class="card-title mb-0"><span class="dot accent"></span>测试配置</div>
+                <div class="card-desc mb-0 mt-2">速度测试衡量模型的生成能力：单流解码 tok/s、多路并发总吞吐、预填充速度与首 token 延迟；与 RPM 压测（请求频率稳定性）互补。</div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 flex-wrap mt-3">
+            <div class="seg" id="providerSeg">
+                <button type="button" class="seg-item active" data-provider="openai">OpenAI</button>
+                <button type="button" class="seg-item" data-provider="responses">Responses</button>
+                <button type="button" class="seg-item" data-provider="anthropic">Anthropic</button>
+                <button type="button" class="seg-item" data-provider="gemini">Gemini</button>
+            </div>
+            <span class="hint" id="providerDesc"></span>
+        </div>
+
+        <div class="form-grid mt-3">
+            <div class="field">
+                <label class="req">Base URL</label>
+                <input class="input" id="url" placeholder="https://api.openai.com">
+                <span class="hint" id="urlHint"></span>
+            </div>
+            <div class="field">
+                <label class="req">API Key</label>
+                <input class="input" type="password" id="apiKey" placeholder="sk-..." autocomplete="off">
+                <span class="hint" id="apiKeyHint"></span>
+            </div>
+            <div class="field">
+                <label class="req">模型名称</label>
+                <input class="input" id="modelName" placeholder="gpt-4o">
+                <span class="hint" id="modelHint"></span>
+            </div>
+            <div class="field">
+                <label>单流解码轮数</label>
+                <input class="input" type="number" id="runs" value="3" min="1" max="10">
+                <span class="hint">串行执行，取多轮均值（默认 3）</span>
+            </div>
+            <div class="field">
+                <label>并发路数</label>
+                <input class="input" type="number" id="concurrency" value="4" min="2" max="16">
+                <span class="hint">同时发起的流式请求数（默认 4）</span>
+            </div>
+            <div class="field">
+                <label>每轮输出 token 上限</label>
+                <input class="input" type="number" id="outputTokens" value="512" min="64" max="8192">
+                <span class="hint">建议 512，便于横向对比</span>
+            </div>
+            <div class="field">
+                <label>预填充提示词规模（token）</label>
+                <input class="input" type="number" id="prefillTokens" value="8000" min="0" max="128000">
+                <span class="hint">0 = 跳过预填充测试</span>
+            </div>
+            <div class="field" style="grid-column: 1 / -1;">
+                <label>解码测试提示词</label>
+                <textarea class="textarea" id="decodePrompt" rows="2">请用中文写一段约三百字的短文，主题是四季的变化。</textarea>
+                <span class="hint">单流解码与并发阶段使用的用户提示词，建议长度适中</span>
+            </div>
+        </div>
+
+        <div class="flex gap-3 flex-wrap mt-4">
+            <button type="button" class="btn btn-primary btn-lg" id="startBtn">开始速度测试</button>
+            <button type="button" class="btn btn-danger btn-lg" id="stopBtn" disabled>停止</button>
+        </div>
+    </div>
+
+    <!-- 进度 -->
+    <div class="card hidden" id="progressCard">
+        <div class="card-title">测试进度</div>
+        <div id="phaseList">
+            <div class="phase-row" id="phase-decode">
+                <span class="phase-icon">1</span>
+                <div>
+                    <div class="phase-name">单流解码测速</div>
+                    <div class="phase-desc">串行流式请求，测量解码头速与 TTFT</div>
+                </div>
+                <span class="phase-detail" id="detail-decode"></span>
+            </div>
+            <div class="phase-row" id="phase-concurrency">
+                <span class="phase-icon">2</span>
+                <div>
+                    <div class="phase-name">并发吞吐测速</div>
+                    <div class="phase-desc">多路并发流式请求，测量聚合吞吐</div>
+                </div>
+                <span class="phase-detail" id="detail-concurrency"></span>
+            </div>
+            <div class="phase-row" id="phase-prefill">
+                <span class="phase-icon">3</span>
+                <div>
+                    <div class="phase-name">预填充测速</div>
+                    <div class="phase-desc">长提示词，用 TTFT 近似 prefill 耗时</div>
+                </div>
+                <span class="phase-detail" id="detail-prefill"></span>
+            </div>
+        </div>
+        <div class="note danger mt-3 hidden" id="progressError"></div>
+    </div>
+
+    <!-- 报告 -->
+    <div class="card hidden" id="reportCard">
+        <div class="card-title" id="reportTitle">测速报告</div>
+        <div class="card-desc" id="reportSub"></div>
+        <div class="flex gap-2 flex-wrap mb-3" id="reportTags"></div>
+        <div id="reportMetrics"></div>
+
+        <div class="divider"></div>
+
+        <div class="grid-2col">
+            <div class="sub-panel">
+                <div class="mb-2" style="font-weight:600">单流解码（逐轮）</div>
+                <div class="muted mb-3" style="font-size:var(--fs-sm)" id="decodeDesc"></div>
+                <div id="decodeBars"></div>
+            </div>
+            <div class="sub-panel">
+                <div class="mb-2" style="font-weight:600">并发吞吐（逐路）</div>
+                <div class="muted mb-3" style="font-size:var(--fs-sm)" id="concurrencyDesc"></div>
+                <div id="concurrencyBars"></div>
+            </div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="report-notes" id="reportNotes"></div>
+    </div>
+
+    <!-- 历史报告 -->
+    <div class="card">
+        <div class="card-head-row mb-3">
+            <div class="card-title mb-0"><span class="dot accent"></span>历史测速报告</div>
+            <div class="head-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="refreshReportsBtn">刷新</button>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>模型</th>
+                        <th>接口协议</th>
+                        <th>Base URL</th>
+                        <th>状态</th>
+                        <th>时间</th>
+                        <th style="text-align:right">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="reportListBody">
+                    <tr><td colspan="6"><div class="empty-state">加载中...</div></td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination" id="reportPagination"></div>
+    </div>
+</div>
+
+<script src="/assets/js/i18n.js"></script>
+<script src="/assets/js/i18n/en.common.js"></script>
+<script src="/assets/js/i18n/en.benchmark.js"></script>
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ws.js"></script>
+<script src="/assets/js/layout.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    const DEFAULT_DECODE_PROMPT = t('请用中文写一段约三百字的短文，主题是四季的变化。');
+    const PAGE_SIZE = 10;
+
+    const BENCH_PROVIDERS = {
+        openai: {
+            desc: 'POST /v1/chat/completions',
+            urlPh: 'https://api.openai.com', modelPh: 'gpt-4o',
+            urlHint: t('官方地址或兼容 OpenAI 协议的网关（无需 /v1 后缀）'),
+            modelHint: t('示例：gpt-4o, gpt-4o-mini 以及 vLLM 等兼容模型'),
+            keyHint: t('通常为 sk- 开头的密钥')
+        },
+        responses: {
+            desc: 'POST /v1/responses',
+            urlPh: 'https://api.openai.com', modelPh: 'gpt-4o',
+            urlHint: t('Responses 接口地址（无需 /v1 后缀）'),
+            modelHint: t('示例：gpt-4o, gpt-4o-mini 及支持 /v1/responses 的模型'),
+            keyHint: t('通常为 sk- 开头的密钥')
+        },
+        anthropic: {
+            desc: 'POST /v1/messages',
+            urlPh: 'https://api.anthropic.com', modelPh: 'claude-3-5-sonnet-20241022',
+            urlHint: t('官方地址或兼容 Anthropic 协议的网关'),
+            modelHint: t('示例：claude-3-5-sonnet-20241022'),
+            keyHint: t('通常为 sk-ant- 开头的密钥')
+        },
+        gemini: {
+            desc: 'streamGenerateContent',
+            urlPh: 'https://generativelanguage.googleapis.com', modelPh: 'gemini-1.5-flash',
+            urlHint: t('示例：https://generativelanguage.googleapis.com'),
+            modelHint: t('示例：gemini-1.5-flash, gemini-1.5-pro'),
+            keyHint: t('从 Google AI Studio 获取')
+        }
+    };
+
+    const PHASE_NUM = { decode: '1', concurrency: '2', prefill: '3' };
+
+    let currentUser = null;
+    let ws = null;
+    let viewState = 'idle'; // idle | running | other
+    let providerType = 'openai';
+    let currentPage = 1;
+    let pollInterval = null;
+
+    const $ = (id) => document.getElementById(id);
+    const els = {};
+
+    function bindStaticEvents() {
+        els.providerSeg.querySelectorAll('.seg-item').forEach((btn) => {
+            btn.addEventListener('click', () => selectProvider(btn.dataset.provider));
+        });
+        els.startBtn.addEventListener('click', startBenchmark);
+        els.stopBtn.addEventListener('click', () => stopBenchmark(false));
+        els.refreshReportsBtn.addEventListener('click', () => loadReports(1));
+        els.forceStopBtn.addEventListener('click', async () => {
+            if (await Layout.confirmDialog(t('当前速度测试由其他用户启动，确定强制停止吗？'), { danger: true, okText: t('强制停止'), title: t('强制停止') })) {
+                stopBenchmark(true);
+            }
+        });
+        els.reportListBody.addEventListener('click', (e) => {
+            const tr = e.target.closest('tr[data-id]');
+            if (!tr) return;
+            if (e.target.closest('.act-view')) viewReport(tr.dataset.id);
+            else if (e.target.closest('.act-del')) deleteReport(tr.dataset.id, tr.dataset.model);
+        });
+    }
+
+    // ---------- 接口协议 ----------
+    function selectProvider(p) {
+        providerType = p;
+        els.providerSeg.querySelectorAll('.seg-item').forEach((b) => {
+            b.classList.toggle('active', b.dataset.provider === p);
+        });
+        updateProviderHints();
+    }
+
+    function updateProviderHints() {
+        const p = BENCH_PROVIDERS[providerType] || BENCH_PROVIDERS.openai;
+        els.providerDesc.textContent = p.desc;
+        els.url.placeholder = p.urlPh;
+        els.modelName.placeholder = p.modelPh;
+        els.urlHint.textContent = p.urlHint;
+        els.modelHint.textContent = p.modelHint;
+        els.apiKeyHint.textContent = p.keyHint;
+    }
+
+    // ---------- 配置记忆 ----------
+    function loadSavedConfig() {
+        try {
+            const saved = localStorage.getItem('llm_eval_bench_config');
+            if (!saved) return;
+            const c = JSON.parse(saved);
+            if (c.providerType && BENCH_PROVIDERS[c.providerType]) selectProvider(c.providerType);
+            if (c.url) els.url.value = c.url;
+            if (c.modelName) els.modelName.value = c.modelName;
+            if (c.apiKey) els.apiKey.value = c.apiKey;
+            if (c.runs) els.runs.value = c.runs;
+            if (c.concurrency) els.concurrency.value = c.concurrency;
+            if (c.outputTokens) els.outputTokens.value = c.outputTokens;
+            if (c.prefillTokens !== undefined) els.prefillTokens.value = c.prefillTokens;
+            if (c.decodePrompt) els.decodePrompt.value = c.decodePrompt;
+        } catch (e) { /* 忽略 */ }
+    }
+
+    function saveConfig() {
+        localStorage.setItem('llm_eval_bench_config', JSON.stringify({
+            providerType,
+            url: els.url.value.trim(),
+            modelName: els.modelName.value.trim(),
+            apiKey: els.apiKey.value.trim(),
+            runs: els.runs.value,
+            concurrency: els.concurrency.value,
+            outputTokens: els.outputTokens.value,
+            prefillTokens: els.prefillTokens.value,
+            decodePrompt: els.decodePrompt.value
+        }));
+    }
+
+    // ---------- 启动 / 停止 ----------
+    function collectForm() {
+        const body = {
+            providerType,
+            url: els.url.value.trim(),
+            modelName: els.modelName.value.trim(),
+            apiKey: els.apiKey.value.trim(),
+            runs: parseInt(els.runs.value, 10) || 3,
+            concurrency: parseInt(els.concurrency.value, 10) || 4,
+            outputTokens: parseInt(els.outputTokens.value, 10) || 512,
+            prefillTokens: parseInt(els.prefillTokens.value, 10) || 0,
+            decodePrompt: els.decodePrompt.value.trim() || DEFAULT_DECODE_PROMPT
+        };
+        if (!body.url || !body.modelName || !body.apiKey) {
+            toast.warning(t('请填写 Base URL、模型名称和 API Key！'));
+            return null;
+        }
+        return body;
+    }
+
+    async function startBenchmark() {
+        const body = collectForm();
+        if (!body) return;
+        saveConfig();
+        resetProgressUI();
+        els.reportCard.classList.add('hidden');
+        setButtons(true);
+        try {
+            await API.post('/api/benchmark/start', body);
+            viewState = 'running';
+            els.progressCard.classList.remove('hidden');
+            toast.success(t('速度测试已启动'));
+        } catch (e) {
+            setButtons(false);
+            toast.error(t('启动失败：') + e.message);
+        }
+    }
+
+    async function stopBenchmark(force) {
+        try {
+            await API.post('/api/benchmark/stop', force ? { force: true } : {});
+            toast.success(t('停止请求已提交'));
+        } catch (e) {
+            if (e.status === 403 && e.data && e.data.ownerMismatch) {
+                if (currentUser && currentUser.role === 'admin') {
+                    if (await Layout.confirmDialog(t('当前速度测试由其他用户启动，是否强制停止？'), { danger: true, okText: t('强制停止'), title: t('权限确认') })) {
+                        stopBenchmark(true);
+                    }
+                } else {
+                    toast.error(e.message || t('当前速度测试由其他用户启动，你的停止请求未生效'));
+                }
+            } else {
+                toast.error(t('停止失败：') + e.message);
+            }
+        }
+    }
+
+    function setButtons(running) {
+        els.startBtn.disabled = running;
+        els.stopBtn.disabled = !running;
+    }
+
+    // ---------- 进度渲染 ----------
+    function resetProgressUI() {
+        ['decode', 'concurrency', 'prefill'].forEach((p) => {
+            markPhase(p, 'pending');
+            setDetail(p, '');
+        });
+        els.progressError.classList.add('hidden');
+        els.progressCard.classList.remove('hidden');
+    }
+
+    function markPhase(name, status) {
+        const row = $('phase-' + name);
+        if (!row) return;
+        row.className = 'phase-row ' + (status === 'running' ? 'running' : status === 'done' ? 'done' : '');
+        row.querySelector('.phase-icon').textContent =
+            status === 'running' ? '' : status === 'done' ? '✓' : status === 'skipped' ? '—' : PHASE_NUM[name];
+    }
+
+    function setDetail(name, text) {
+        const el = $('detail-' + name);
+        if (el) el.textContent = text;
+    }
+
+    function applyState(st) {
+        if (!st) return;
+        const phases = st.phases || {};
+        ['decode', 'concurrency', 'prefill'].forEach((p) => {
+            markPhase(p, (phases[p] && phases[p].status) || 'pending');
+        });
+        const dec = phases.decode;
+        if (dec && dec.runs && dec.runs.length) {
+            const last = dec.runs[dec.runs.length - 1];
+            setDetail('decode', `${t('已完成')} ${dec.runs.length} ${t('轮 · 最近')} ${last.tokPerSec} tok/s · TTFT ${(last.ttftMs / 1000).toFixed(2)}s`);
+        }
+        const con = phases.concurrency;
+        if (con && con.streams && con.streams.length) {
+            setDetail('concurrency', con.totalTokPerSec != null
+                ? `${con.totalTokPerSec} tok/s · ${con.streams.length} ${t('路')}`
+                : `${t('已完成')} ${con.streams.length} ${t('路')}`);
+        }
+        const pre = phases.prefill;
+        if (pre && pre.result) {
+            setDetail('prefill', `${pre.result.tokPerSec} tok/s @ ${fmtTokens(pre.result.promptTokens)}`);
+        }
+    }
+
+    function applyProgress(data) {
+        if (!data) return;
+        if (data.phase === 'decode' && data.run) {
+            markPhase('decode', 'running');
+            setDetail('decode', `${t('第')} ${data.run.run} ${t('轮 ·')} ${data.run.tokPerSec} tok/s · TTFT ${(data.run.ttftMs / 1000).toFixed(2)}s`);
+        }
+        if (data.phase === 'concurrency') {
+            markPhase('decode', 'done');
+            markPhase('concurrency', 'done');
+            setDetail('concurrency', `${data.totalTokPerSec} tok/s（${fmtTokens(data.totalTokens)} tokens / ${(data.wallTimeMs / 1000).toFixed(1)}s）`);
+        }
+        if (data.phase === 'prefill' && data.result) {
+            markPhase('concurrency', 'done');
+            markPhase('prefill', 'done');
+            setDetail('prefill', `${data.result.tokPerSec} tok/s @ ${fmtTokens(data.result.promptTokens)}`);
+        }
+    }
+
+    function applyError(message) {
+        if (!message) return;
+        setButtons(false);
+        els.progressError.textContent = '⚠ ' + message;
+        els.progressError.classList.remove('hidden');
+    }
+
+    // ---------- 报告渲染 ----------
+    function fmtNum(v) {
+        return v == null ? '-' : String(v);
+    }
+
+    function providerName(type) {
+        const map = { openai: t('OpenAI Chat Completions 接口'), responses: t('OpenAI Responses 接口'), 'openai-responses': t('OpenAI Responses 接口'), anthropic: t('Anthropic Messages 接口'), claude: t('Anthropic Messages 接口'), gemini: t('Gemini 接口') };
+        return map[type] || type || '-';
+    }
+
+    function spreadText(runs) {
+        if (!runs || runs.length < 2) return '';
+        const min = Math.min(...runs.map((r) => r.tokPerSec));
+        const max = Math.max(...runs.map((r) => r.tokPerSec));
+        const spread = ((max - min) / max) * 100;
+        return ` · ${t('波动')} ±${spread.toFixed(1)}%`;
+    }
+
+    function metricCardsHtml(r) {
+        const d = r.decode || {}, c = r.concurrency || {}, p = r.prefill;
+        const card = (label, value, unit, foot, cls) => `
+            <div class="stat-card ${cls}">
+                <div class="stat-label">${label}</div>
+                <div class="stat-value">${value}${unit ? `<span class="stat-unit">${unit}</span>` : ''}</div>
+                <div class="stat-foot">${foot}</div>
+            </div>`;
+        return `<div class="stat-grid">
+            ${card(t('单流解码速度'), d.avgTokPerSec != null ? fmtNum(d.avgTokPerSec) : '-', 'tok/s', d.runs && d.runs.length ? `${d.runs.length} ${t('轮均值')}${spreadText(d.runs)}` : t('无数据'), 'accent')}
+            ${card(t('并发总吞吐'), c.totalTokPerSec != null ? fmtNum(c.totalTokPerSec) : '-', 'tok/s', c.streams && c.streams.length ? `${c.concurrency} ${t('路并发 · 单路均')} ${c.perStreamAvg != null ? c.perStreamAvg : '-'} tok/s` : t('无数据'), 'warn')}
+            ${card(t('预填充速度'), p ? fmtNum(p.tokPerSec) : t('未测试'), p ? 'tok/s' : '', p ? `${fmtTokens(p.promptTokens)} ${t('提示词 · TTFT')} ${(p.ttftMs / 1000).toFixed(2)}s` : t('可将预填充规模设为大于 0 启用'), '')}
+            ${card(t('首 token 延迟'), r.shortTtftMs != null ? (r.shortTtftMs / 1000).toFixed(2) : '-', 's', t('短提示词 TTFT 均值'), 'good')}
+        </div>`;
+    }
+
+    function tagsHtml(r) {
+        const c = r.config || {};
+        const tags = [
+            `${t('解码轮数')} ${c.runs != null ? c.runs : '-'}`,
+            `${t('并发')} ${c.concurrency != null ? c.concurrency : '-'} ${t('路')}`,
+            `${t('输出上限')} ${c.outputTokens != null ? c.outputTokens : '-'} token`,
+            c.prefillTokens > 0 ? `${t('预填充')} ${fmtTokens(c.prefillTokens)} ${t('提示词')}` : t('未做预填充测试'),
+            r.estimated ? t('token 数含估算值') : t('token 数取自接口 usage')
+        ];
+        return tags.map((tag) => `<span class="badge ${/估算|estimat/i.test(tag) ? 'warning' : 'muted'}">${esc(tag)}</span>`).join('');
+    }
+
+    function decodeBarsHtml(r) {
+        const d = r.decode || {};
+        if (!d.runs || !d.runs.length) return '<div class="empty-state">' + t('无数据') + '</div>';
+        const max = Math.max(...d.runs.map((x) => x.tokPerSec));
+        return d.runs.map((x) => `
+            <div class="bar-row">
+                <span class="bar-label">run ${x.run}</span>
+                <div class="bar-track"><div class="bar-fill" style="width:${pctWidth(x.tokPerSec, max)}%"></div></div>
+                <span class="bar-value">${x.tokPerSec} tok/s</span>
+            </div>
+            <div class="bar-sub">${x.completionTokens} tokens · TTFT ${(x.ttftMs / 1000).toFixed(2)}s</div>`).join('');
+    }
+
+    function concurrencyBarsHtml(r) {
+        const c = r.concurrency || {};
+        if (!c.streams || !c.streams.length) return '<div class="empty-state">' + t('无数据') + '</div>';
+        const max = Math.max(...c.streams.map((x) => x.tokPerSec), c.perStreamAvg || 0);
+        return c.streams.map((x) => `
+            <div class="bar-row">
+                <span class="bar-label">${t('流')} ${x.stream}</span>
+                <div class="bar-track"><div class="bar-fill alt" style="width:${pctWidth(x.tokPerSec, max)}%"></div></div>
+                <span class="bar-value">${x.tokPerSec} tok/s</span>
+            </div>`).join('') + (c.totalTokPerSec != null ? `
+            <div class="bar-row">
+                <span class="bar-label">${t('合计')}</span>
+                <div class="bar-track"><div class="bar-fill green" style="width:100%"></div></div>
+                <span class="bar-value text-success">${c.totalTokPerSec} tok/s</span>
+            </div>` : '');
+    }
+
+    function pctWidth(v, max) {
+        return max > 0 ? Math.max(3, (v / max) * 100).toFixed(1) : '0';
+    }
+
+    function notesHtml(r) {
+        const d = r.decode || {}, c = r.concurrency || {}, p = r.prefill;
+        const notes = [];
+        if (d.avgTokPerSec != null) {
+            notes.push(`${t('单流解码约')} <strong>${d.avgTokPerSec} tok/s</strong>${t('，约为舒适阅读速度（~8 tok/s）的')} ${(d.avgTokPerSec / 8).toFixed(1)} ${t('倍。')}`);
+        }
+        if (c.totalTokPerSec != null && d.avgTokPerSec) {
+            const ratio = c.totalTokPerSec / d.avgTokPerSec;
+            notes.push(`${t('并发')} ${c.concurrency} ${t('路聚合吞吐')} <strong>${c.totalTokPerSec} tok/s</strong>${t('，为单流的')} ${ratio.toFixed(2)}×${ratio < c.concurrency * 0.8 ? t('（存在一定请求排队或带宽瓶颈）。') : t('（并发扩展性良好）。')}`);
+        }
+        if (p) {
+            notes.push(`${t('预填充')} <strong>${p.tokPerSec} tok/s</strong>${t('，')}${fmtTokens(p.promptTokens)} ${t('token 提示词的 TTFT 约')} ${(p.ttftMs / 1000).toFixed(2)}s${t('。')}`);
+        }
+        notes.push(t('指标口径：TTFT 为首字节到达时间；解码速度 = 输出 token 数 ÷ (总耗时 − TTFT)；token 数优先取自接口 usage 字段。'));
+        if (r.estimated) {
+            notes.push(t('注意：本次部分 token 数由响应文本长度估算（接口未返回 usage），结果存在一定误差。'));
+        }
+        return notes.map((n) => `· ${n}`).join('<br>');
+    }
+
+    function renderReport(r) {
+        if (!r) return;
+        els.reportCard.classList.remove('hidden');
+        els.reportTitle.textContent = `${r.modelName || ''} ${t('测速报告')}`;
+        els.reportSub.textContent =
+            `${providerName(r.providerType)} · ${r.baseUrl || '-'} · ${fmtTime(r.createdAt)}` +
+            (r.partial ? t(' · 部分结果') : '');
+        els.reportTags.innerHTML = tagsHtml(r);
+        els.reportMetrics.innerHTML = metricCardsHtml(r);
+
+        const d = r.decode || {}, c = r.concurrency || {};
+        els.decodeDesc.textContent = d.runs && d.runs.length
+            ? `${d.runs.length} ${t('轮串行流式请求，每轮输出上限')} ${r.config && r.config.outputTokens ? r.config.outputTokens : '-'} ${t('token，EOS 提前结束则以实际产出计。')}`
+            : '';
+        els.decodeBars.innerHTML = decodeBarsHtml(r);
+        els.concurrencyDesc.textContent = c.streams && c.streams.length
+            ? `${c.concurrency} ${t('路同时发起流式请求，持续约')} ${(c.wallTimeMs / 1000).toFixed(1)}s${t('，累计')} ${c.totalTokens} tokens${t('。')}`
+            : '';
+        els.concurrencyBars.innerHTML = concurrencyBarsHtml(r);
+        els.reportNotes.innerHTML = notesHtml(r);
+        els.reportCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // ---------- WS 事件 ----------
+    function handleStateMsg(d) {
+        if (d && d.isRunning) {
+            viewState = 'running';
+            els.progressCard.classList.remove('hidden');
+            els.progressError.classList.add('hidden');
+            applyState(d);
+            setButtons(true);
+            return;
+        }
+        if (d && d.error && !d.report) {
+            viewState = 'idle';
+            applyError(d.error);
+            return;
+        }
+        if (d && d.report) {
+            viewState = 'idle';
+            setButtons(false);
+            if (d.phases) applyState({ phases: d.phases });
+            renderReport(d.report);
+            loadReports(currentPage);
+        }
+    }
+
+    function onCompleted(report) {
+        viewState = 'idle';
+        setButtons(false);
+        ['decode', 'concurrency'].forEach((p) => markPhase(p, 'done'));
+        markPhase('prefill', report && report.prefill ? 'done' : 'skipped');
+        els.progressError.classList.add('hidden');
+        renderReport(report);
+        loadReports(currentPage);
+        toast.success(t('速度测试完成'));
+    }
+
+    function onStopped(state) {
+        viewState = 'idle';
+        setButtons(false);
+        applyError(t('测试已被手动停止') + (state && state.report ? t('，已保存部分结果') : ''));
+        if (state && state.report) {
+            if (state.phases) applyState(state);
+            renderReport(state.report);
+        }
+        loadReports(currentPage);
+    }
+
+    // ---------- 历史报告 ----------
+    const LIST_STATUS = { completed: ['success', t('已完成')], stopped: ['warning', t('已停止')], failed: ['danger', t('失败')] };
+
+    async function loadReports(page) {
+        currentPage = page || currentPage || 1;
+        try {
+            const data = await API.get(`/api/benchmark/reports?page=${currentPage}&pageSize=${PAGE_SIZE}`);
+            renderReports(data && data.list ? data.list : [], data || {});
+        } catch (e) {
+            els.reportListBody.innerHTML = '<tr><td colspan="6"><div class="empty-state">' + t('加载失败') + '</div></td></tr>';
+            els.reportPagination.innerHTML = '';
+        }
+    }
+
+    function renderReports(list, meta) {
+        if (!list.length) {
+            els.reportListBody.innerHTML = '<tr><td colspan="6"><div class="empty-state">' + t('暂无测速报告，完成一次速度测试后会自动存档') + '</div></td></tr>';
+            els.reportPagination.innerHTML = '';
+            return;
+        }
+        els.reportListBody.innerHTML = list.map((item) => {
+            const st = LIST_STATUS[item.status] || ['muted', item.status || '-'];
+            return `
+                <tr data-id="${item.id}" data-model="${esc(item.model_name || '')}" style="cursor:pointer">
+                    <td class="mono">${esc(item.model_name || '-')}</td>
+                    <td>${esc(providerName(item.provider_type))}</td>
+                    <td class="muted"><span class="ellipsis" style="display:inline-block;max-width:220px;vertical-align:bottom" title="${esc(item.base_url || '')}">${esc(item.base_url || '-')}</span></td>
+                    <td><span class="badge ${st[0]}">${esc(st[1])}</span></td>
+                    <td class="muted">${fmtTime(item.created_at)}</td>
+                    <td>
+                        <div class="flex gap-2" style="justify-content:flex-end">
+                            <button type="button" class="btn btn-ghost btn-sm act-view">${t('查看')}</button>
+                            <button type="button" class="btn btn-danger btn-sm act-del">${t('删除')}</button>
+                        </div>
+                    </td>
+                </tr>`;
+        }).join('');
+        renderPagination(meta);
+    }
+
+    function renderPagination(meta) {
+        const total = meta.total || 0;
+        const totalPages = Math.max(1, meta.totalPages || 1);
+        const page = Math.min(Math.max(1, meta.page || currentPage), totalPages);
+        els.reportPagination.innerHTML = `
+            <span class="page-info">${t('共')} ${fmtInt(total)} ${t('条')} · ${t('第 {page} / {totalPages} 页').replace('{page}', page).replace('{totalPages}', totalPages)}</span>
+            <button type="button" class="pg-btn" id="pg-prev" ${page <= 1 ? 'disabled' : ''}>${t('上一页')}</button>
+            <button type="button" class="pg-btn" id="pg-next" ${page >= totalPages ? 'disabled' : ''}>${t('下一页')}</button>`;
+        els.reportPagination.querySelector('#pg-prev').addEventListener('click', () => loadReports(page - 1));
+        els.reportPagination.querySelector('#pg-next').addEventListener('click', () => loadReports(page + 1));
+    }
+
+    // ---------- 报告详情 / 删除 ----------
+    async function viewReport(id) {
+        try {
+            const rep = await API.get(`/api/benchmark/reports/${id}`);
+            openReportModal(rep || {});
+        } catch (e) {
+            toast.error(t('加载报告失败：') + e.message);
+        }
+    }
+
+    function openReportModal(rep) {
+        const r = rep.result || {};
+        const body = document.createElement('div');
+        body.innerHTML = `
+            <div class="tabs">
+                <button type="button" class="tab active" data-t="summary">${t('摘要')}</button>
+                <button type="button" class="tab" data-t="json">${t('原始 JSON')}</button>
+            </div>
+            <div data-v="summary">
+                <div class="muted mb-3" style="font-size:var(--fs-sm)">${esc(providerName(rep.providerType))} · ${esc(rep.baseUrl || '-')} · ${fmtTime(rep.createdAt)}${rep.status === 'stopped' ? t(' · 部分结果') : ''}</div>
+                ${metricCardsHtml(r)}
+                <div class="flex gap-2 flex-wrap mt-3">${tagsHtml(r)}</div>
+                <div class="mt-3 report-notes">${notesHtml(r)}</div>
+            </div>
+            <div data-v="json" class="hidden">
+                <pre class="mono json-pre">${esc(JSON.stringify(r && Object.keys(r).length ? r : rep, null, 2))}</pre>
+            </div>`;
+        body.querySelectorAll('.tab').forEach((t) => {
+            t.addEventListener('click', () => {
+                body.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
+                body.querySelectorAll('[data-v]').forEach((v) => v.classList.toggle('hidden', v.dataset.v !== t.dataset.t));
+            });
+        });
+        Layout.modal({ title: `${rep.modelName || t('测速')} ${t('报告详情')}`, body, large: true });
+    }
+
+    async function deleteReport(id, modelName) {
+        if (!(await Layout.confirmDialog(`${t('确定删除')} <b>${esc(modelName || t('该模型'))}</b> ${t('的测速报告吗？此操作不可恢复。')}`, { danger: true, okText: t('删除'), title: t('删除报告') }))) return;
+        try {
+            await API.del(`/api/benchmark/reports/${id}`);
+            toast.success(t('报告已删除'));
+            loadReports(currentPage);
+        } catch (e) {
+            toast.error(t('删除失败：') + e.message);
+        }
+    }
+
+    // ---------- 状态查询 / 轮询 ----------
+    function enterOtherState() {
+        viewState = 'other';
+        els.otherBanner.classList.remove('hidden');
+        els.forceStopBtn.classList.toggle('hidden', !(currentUser && currentUser.role === 'admin'));
+        els.configCard.classList.add('hidden');
+        els.progressCard.classList.add('hidden');
+        setButtons(false);
+    }
+
+    function leaveOtherState() {
+        viewState = 'idle';
+        els.otherBanner.classList.add('hidden');
+        els.configCard.classList.remove('hidden');
+        setButtons(false);
+    }
+
+    async function refreshStatus() {
+        let d;
+        try {
+            d = await API.get('/api/benchmark/status');
+        } catch (e) {
+            return;
+        }
+        if (!d) return;
+
+        if ((d.owner || null) === 'other') {
+            if (viewState !== 'other') enterOtherState();
+            return;
+        }
+        if (viewState === 'other') leaveOtherState();
+
+        if (d.isRunning) {
+            viewState = 'running';
+            els.progressCard.classList.remove('hidden');
+            applyState(d);
+            setButtons(true);
+            return;
+        }
+        if (viewState === 'running') {
+            // 错过完成/停止事件时兜底收尾
+            viewState = 'idle';
+            setButtons(false);
+            if (d.report) {
+                ['decode', 'concurrency'].forEach((p) => markPhase(p, 'done'));
+                markPhase('prefill', d.report.prefill ? 'done' : 'skipped');
+                renderReport(d.report);
+                loadReports(currentPage);
+            } else if (d.error) {
+                applyError(d.error);
+            }
+            return;
+        }
+        if (d.report && els.reportCard.classList.contains('hidden')) {
+            renderReport(d.report);
+        }
+    }
+
+    // ---------- 初始化 ----------
+    Layout.init({ active: 'benchmark', title: '速度测试' }).then((user) => {
+        currentUser = user;
+        ['otherBanner', 'forceStopBtn', 'configCard', 'providerSeg', 'providerDesc', 'url', 'apiKey', 'modelName', 'urlHint', 'apiKeyHint', 'modelHint', 'runs', 'concurrency', 'outputTokens', 'prefillTokens', 'decodePrompt', 'startBtn', 'stopBtn', 'progressCard', 'progressError', 'reportCard', 'reportTitle', 'reportSub', 'reportTags', 'reportMetrics', 'decodeDesc', 'decodeBars', 'concurrencyDesc', 'concurrencyBars', 'reportNotes', 'refreshReportsBtn', 'reportListBody', 'reportPagination']
+            .forEach((id) => { els[id] = $(id); });
+
+        bindStaticEvents();
+        loadSavedConfig();
+        updateProviderHints();
+
+        ws = createWS();
+        ws.on('benchmarkStarted', (d) => handleStateMsg(d));
+        ws.on('benchmarkState', (d) => handleStateMsg(d));
+        ws.on('benchmarkProgress', (d) => applyProgress(d));
+        ws.on('benchmarkCompleted', (d) => onCompleted(d));
+        ws.on('benchmarkStopped', (d) => onStopped(d));
+        ws.on('benchmarkError', (d) => applyError(d && d.error));
+
+        refreshStatus();
+        loadReports(1);
+
+        const viewId = new URLSearchParams(window.location.search).get('id');
+        if (viewId) viewReport(viewId);
+
+        pollInterval = setInterval(refreshStatus, 8000);
+    });
+})();
+</script>
+</body>
+</html>

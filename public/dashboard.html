@@ -1,0 +1,2502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>压测控制台 · LLM-API-Eval</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/css/theme.css">
+<style>
+    /* ===== 本页专用样式 ===== */
+    /* 可折叠配置分组 */
+    details.cfg-group {
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        background: var(--surface-2);
+        margin-bottom: 12px;
+        overflow: hidden;
+    }
+    details.cfg-group > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: var(--fs-md);
+        font-weight: 600;
+        color: var(--text-1);
+        user-select: none;
+    }
+    details.cfg-group > summary::-webkit-details-marker { display: none; }
+    details.cfg-group > summary .g-caret {
+        margin-left: auto;
+        color: var(--text-3);
+        transition: transform 0.2s;
+        font-size: var(--fs-xs);
+    }
+    details.cfg-group[open] > summary .g-caret { transform: rotate(180deg); }
+    details.cfg-group > summary .g-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--primary-grad);
+        flex-shrink: 0;
+    }
+    details.cfg-group > summary .g-sub { font-size: var(--fs-xs); color: var(--text-3); font-weight: 400; }
+    .cfg-body { padding: 4px 16px 16px; }
+
+    /* 选项卡片（接口 / 目标 / 模式 / 请求内容） */
+    .opt-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+        gap: 10px;
+    }
+    .opt-card {
+        border: 1px solid var(--border);
+        background: var(--bg-deep);
+        border-radius: var(--r-sm);
+        padding: 10px 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .opt-card:hover { border-color: var(--border-strong); }
+    .opt-card.active {
+        border-color: var(--primary);
+        background: var(--primary-soft);
+        box-shadow: 0 0 0 1px var(--primary);
+    }
+    .opt-card .oc-title { font-size: var(--fs-sm); font-weight: 600; margin-bottom: 2px; }
+    .opt-card .oc-desc { font-size: var(--fs-xs); color: var(--text-3); font-family: var(--mono); line-height: 1.4; }
+
+    /* 运行中呼吸光效 */
+    @keyframes breathe {
+        0%, 100% { box-shadow: 0 0 0 rgba(52, 211, 153, 0); border-color: var(--border); }
+        50% { box-shadow: 0 0 26px rgba(52, 211, 153, 0.30); border-color: rgba(52, 211, 153, 0.55); }
+    }
+    #monitorCard.running { animation: breathe 2.6s ease-in-out infinite; }
+
+    /* 图表 */
+    .chart-holder { position: relative; }
+    .chart-holder svg { width: 100%; height: auto; display: block; }
+    .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-2); margin-bottom: 6px; }
+    .chart-legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+    .chart-legend .lg i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+    .chart-block-title { font-size: var(--fs-xs); color: var(--text-3); letter-spacing: 0.5px; margin-bottom: 4px; }
+
+    /* 请求列表行 */
+    .prompt-item { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+    .prompt-item .input { flex: 1; }
+
+    /* 断言编辑器 */
+    .assert-row {
+        display: grid;
+        grid-template-columns: 130px 1fr auto auto;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+    @media (max-width: 720px) { .assert-row { grid-template-columns: 1fr 1fr; } }
+    .assert-row .check-row { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+    .var-chip {
+        font-family: var(--mono);
+        font-size: var(--fs-xs);
+        padding: 3px 9px;
+        border-radius: 6px;
+        border: 1px solid var(--border-strong);
+        background: var(--surface-3);
+        color: #22d3ee;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .var-chip:hover { border-color: var(--primary); background: var(--primary-soft); }
+
+    /* 配置卡片底部操作区 */
+    .cfg-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+    }
+    .cfg-foot .foot-hint { font-size: var(--fs-xs); color: var(--text-3); line-height: 1.6; }
+
+    /* 预热 / 阶梯进度条 */
+    .flow-bar {
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        border-radius: var(--r-sm);
+        padding: 10px 14px;
+        margin-bottom: 14px;
+        font-size: var(--fs-sm);
+    }
+    .flow-bar .fb-label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* 监测头部实时读数 */
+    .live-read { font-family: var(--mono); font-size: var(--fs-lg); font-weight: 700; color: #22d3ee; font-variant-numeric: tabular-nums; }
+    .live-read.tpm { color: #a78bfa; }
+</style>
+</head>
+<body data-page="dashboard">
+<div id="page-content">
+
+    <!-- ============ ① 目标与模式配置 ============ -->
+    <section class="card" id="configCard">
+        <div class="card-head-row">
+            <div>
+                <div class="card-title">目标与模式配置</div>
+                <div class="card-desc">选择目标预设一键填充，或手动配置被测接口、加压模式、请求内容与判定标准</div>
+            </div>
+            <div class="head-actions flex flex-wrap items-center gap-2">
+                <select class="select" id="presetSelect" style="width:auto;min-width:200px" title="目标预设">
+                    <option value="">选择目标预设…</option>
+                </select>
+                <button class="btn btn-ghost btn-sm" id="presetSaveBtn" type="button">保存为预设</button>
+                <button class="btn btn-ghost btn-sm" id="presetDelBtn" type="button" disabled>删除</button>
+            </div>
+        </div>
+
+        <!-- 其他用户压测横幅 -->
+        <div class="note warning mb-3 hidden" id="otherBanner">
+            <span id="otherIcon"></span>
+            <div class="flex-1">
+                <b>其他用户正在压测</b> · <span id="otherInfo">-</span>
+            </div>
+            <button class="btn btn-danger btn-sm" id="forceStopBtn" type="button">强制停止</button>
+        </div>
+
+        <!-- 分组 1：目标接口 -->
+        <details class="cfg-group" open>
+            <summary><span class="g-dot"></span>目标接口<span class="g-sub">接口协议 / 地址 / 凭证 / 请求方式</span><span class="g-caret">▾</span></summary>
+            <div class="cfg-body">
+                <div class="opt-grid mb-3" id="providerCards">
+                    <div class="opt-card active" data-provider="openai">
+                        <div class="oc-title">OpenAI 接口</div>
+                        <div class="oc-desc">POST /v1/chat/completions</div>
+                    </div>
+                    <div class="opt-card" data-provider="responses">
+                        <div class="oc-title">OpenAI Responses</div>
+                        <div class="oc-desc">POST /v1/responses</div>
+                    </div>
+                    <div class="opt-card" data-provider="claude">
+                        <div class="oc-title">Anthropic 接口</div>
+                        <div class="oc-desc">POST /v1/messages</div>
+                    </div>
+                    <div class="opt-card" data-provider="gemini">
+                        <div class="oc-title">Gemini 接口</div>
+                        <div class="oc-desc">POST /v1beta/models/:generateContent</div>
+                    </div>
+                </div>
+
+                <div class="form-grid">
+                    <div class="field span-2">
+                        <label class="req">Base URL</label>
+                        <input type="text" class="input" id="url" placeholder="https://api.openai.com">
+                        <span class="hint" id="urlHint"></span>
+                    </div>
+                    <div class="field">
+                        <label class="req">API Key</label>
+                        <input type="password" class="input" id="apiKey" placeholder="sk-...">
+                        <span class="hint" id="apiKeyHint"></span>
+                    </div>
+                    <div class="field">
+                        <label class="req">模型名称</label>
+                        <input type="text" class="input" id="modelName" placeholder="gpt-4o">
+                        <span class="hint" id="modelHint"></span>
+                    </div>
+                </div>
+
+                <div class="mt-3 flex items-center gap-3 flex-wrap">
+                    <span class="muted" style="font-size:var(--fs-sm)">请求方式</span>
+                    <div class="seg" id="requestTypeSeg">
+                        <button class="seg-item active" data-type="stream" type="button">流式请求</button>
+                        <button class="seg-item" data-type="non-stream" type="button">非流式请求</button>
+                    </div>
+                    <span class="hint">流式可统计 TTFB 与 TPOT；非流式一次性返回完整响应</span>
+                </div>
+            </div>
+        </details>
+
+        <!-- 分组 2：加压模式 -->
+        <details class="cfg-group" open>
+            <summary><span class="g-dot"></span>加压模式<span class="g-sub">测试目标 / 六种加压模型 / 模式参数 / 预热期</span><span class="g-caret">▾</span></summary>
+            <div class="cfg-body">
+                <div class="mb-2 muted" style="font-size:var(--fs-sm)">测试目标（选完自动配置模式与数据集）</div>
+                <div class="opt-grid mb-2" id="goalCards">
+                    <div class="opt-card" data-goal="rpm">
+                        <div class="oc-title">RPM 上限</div>
+                        <div class="oc-desc">短入短出 + 自动寻优，判定看成功率与 TTFT P99</div>
+                    </div>
+                    <div class="opt-card" data-goal="tpm">
+                        <div class="oc-title">TPM 上限</div>
+                        <div class="oc-desc">长出 + 并发阶梯，判定看 output TPM 与 TPOT P99</div>
+                    </div>
+                    <div class="opt-card active" data-goal="probe">
+                        <div class="oc-title">一键能力探测</div>
+                        <div class="oc-desc">自动跑两轮，直接给出 RPM 与 TPM 两个数值</div>
+                    </div>
+                    <div class="opt-card" data-goal="custom">
+                        <div class="oc-title">自定义</div>
+                        <div class="oc-desc">自己选模式、数据集与全部参数</div>
+                    </div>
+                </div>
+                <div class="note mb-3 hidden" id="goalHint"></div>
+
+                <div class="mb-2 muted" style="font-size:var(--fs-sm)">加压模型</div>
+                <div class="opt-grid mb-3" id="modeCards">
+                    <div class="opt-card active" data-mode="fixed">
+                        <div class="oc-title">固定压测</div>
+                        <div class="oc-desc">以固定 RPM 持续施压（开环）</div>
+                    </div>
+                    <div class="opt-card" data-mode="auto">
+                        <div class="oc-title">自动增压</div>
+                        <div class="oc-desc">RPM 阶梯/线性递增，探测拐点</div>
+                    </div>
+                    <div class="opt-card" data-mode="concurrency">
+                        <div class="oc-title">恒定并发</div>
+                        <div class="oc-desc">固定并发路数，还原真实用户（闭环）</div>
+                    </div>
+                    <div class="opt-card" data-mode="concurrency-ramp">
+                        <div class="oc-title">并发阶梯</div>
+                        <div class="oc-desc">并发逐档上升，找 TPM 饱和点</div>
+                    </div>
+                    <div class="opt-card" data-mode="seek">
+                        <div class="oc-title">自动寻优</div>
+                        <div class="oc-desc">二分逼近最大可持续 RPM</div>
+                    </div>
+                    <div class="opt-card" data-mode="probe">
+                        <div class="oc-title">能力探测</div>
+                        <div class="oc-desc">自动求最大可持续 RPM 与 TPM</div>
+                    </div>
+                </div>
+
+                <!-- 固定压测参数 -->
+                <div id="fixedRPMGroup">
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label class="req">目标 RPM</label>
+                            <input type="number" class="input" id="fixedRPM" value="60" min="1" max="100000">
+                            <span class="hint">每分钟请求数，范围 1 - 100,000</span>
+                        </div>
+                        <div class="field">
+                            <label>测试时长（分钟）</label>
+                            <input type="number" class="input" id="testDuration" value="0" min="0" max="1440" placeholder="0 表示不限时">
+                            <span class="hint">0 = 不限时（手动停止），到期自动停止</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 自动增压参数 -->
+                <div id="autoRPMGroup" class="hidden">
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label>起始 RPM</label>
+                            <input type="number" class="input" id="autoRPM" value="10" min="1" max="100000">
+                        </div>
+                        <div class="field">
+                            <label>递增方式</label>
+                            <select class="select" id="rampVariant">
+                                <option value="step">阶梯递增</option>
+                                <option value="linear">线性递增</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>每级增量（RPM）</label>
+                            <input type="number" class="input" id="incrementRPM" value="10" min="1">
+                        </div>
+                        <div class="field">
+                            <label>递增间隔（秒）</label>
+                            <input type="number" class="input" id="incrementInterval" value="60" min="1">
+                            <span class="hint">阶梯递增时生效</span>
+                        </div>
+                        <div class="field">
+                            <label>线性递增总时长（分钟）</label>
+                            <input type="number" class="input" id="rampDuration" value="10" min="1">
+                            <span class="hint">线性递增时生效：在此时长内从起始 RPM 升到上限</span>
+                        </div>
+                        <div class="field">
+                            <label>RPM 上限</label>
+                            <input type="number" class="input" id="maxRPM" value="1000" min="1">
+                            <span class="hint">达到上限后自动停止</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 恒定并发参数 -->
+                <div id="concurrencyGroup" class="hidden">
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label class="req">并发路数</label>
+                            <input type="number" class="input" id="concurrency" value="8" min="1" max="512">
+                            <span class="hint">每个 worker 在上一个请求返回后立即发起下一个，请求节奏由被测服务决定</span>
+                        </div>
+                        <div class="field">
+                            <label>测试时长（分钟）</label>
+                            <input type="number" class="input" id="concurrencyDuration" value="0" min="0" max="1440" placeholder="0 表示不限时">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 并发阶梯参数 -->
+                <div id="ladderGroup" class="hidden">
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label>起始并发</label>
+                            <input type="number" class="input" id="concurrencyStart" value="1" min="1" max="512">
+                        </div>
+                        <div class="field">
+                            <label>并发上限</label>
+                            <input type="number" class="input" id="concurrencyMax" value="16" min="1" max="512">
+                        </div>
+                        <div class="field">
+                            <label>并发倍数</label>
+                            <input type="number" class="input" id="concurrencyMultiplier" value="2" min="1.1" step="0.5">
+                            <span class="hint">每档并发 = 上一档 × 倍数，例如 1/2/4/8/16</span>
+                        </div>
+                        <div class="field">
+                            <label>每档持续时间（秒）</label>
+                            <input type="number" class="input" id="ladderStepDuration" value="60" min="5">
+                            <span class="hint">样本不足时自动延长；output TPM 增幅低于阈值即判定饱和</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 自动寻优参数 -->
+                <div id="seekGroup" class="hidden">
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label>起始 RPM</label>
+                            <input type="number" class="input" id="seekRPM" value="10" min="1">
+                        </div>
+                        <div class="field">
+                            <label>初始探测步长（RPM）</label>
+                            <input type="number" class="input" id="seekIncrementRPM" value="20" min="1">
+                            <span class="hint">未达标时步长自动减半，直至收敛</span>
+                        </div>
+                        <div class="field">
+                            <label>每档持续时间（秒）</label>
+                            <input type="number" class="input" id="seekStepDuration" value="60" min="5">
+                            <span class="hint">样本不足时会自动延长当前档位</span>
+                        </div>
+                        <div class="field">
+                            <label>RPM 上限</label>
+                            <input type="number" class="input" id="seekMaxRPM" value="1000" min="1">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 预热期 -->
+                <div id="warmupGroup" class="hidden">
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label>预热期（秒）</label>
+                            <input type="number" class="input" id="warmupDuration" value="0" min="0" max="600">
+                            <span class="hint">0-600 秒。预热期请求不计入正式统计，避免冷连接拖高 P99（仅固定 / 自动增压 / 恒定并发模式支持）</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </details>
+
+        <!-- 分组 3：请求内容 -->
+        <details class="cfg-group" open>
+            <summary><span class="g-dot"></span>请求内容<span class="g-sub">请求模式 / 请求文本 / 数据集 / 复用率</span><span class="g-caret">▾</span></summary>
+            <div class="cfg-body">
+                <div class="opt-grid mb-3" id="promptModeCards">
+                    <div class="opt-card active" data-mode="fixed">
+                        <div class="oc-title">固定请求</div>
+                        <div class="oc-desc">所有请求使用相同内容</div>
+                    </div>
+                    <div class="opt-card" data-mode="random">
+                        <div class="oc-title">随机请求</div>
+                        <div class="oc-desc">请求库随机选取并变化</div>
+                    </div>
+                    <div class="opt-card" data-mode="dataset">
+                        <div class="oc-title">压测数据集</div>
+                        <div class="oc-desc">按场景预设，输入/输出长度受控</div>
+                    </div>
+                    <div class="opt-card" data-mode="template">
+                        <div class="oc-title">模板请求</div>
+                        <div class="oc-desc">变量渲染，每次请求内容动态变化</div>
+                    </div>
+                </div>
+
+                <!-- 固定请求 -->
+                <div class="field mb-3" id="fixedPromptGroup">
+                    <label class="req">测试请求（支持大文本，最多 200K 字符）</label>
+                    <textarea class="textarea" id="testPrompt" style="min-height:160px" placeholder="输入测试请求..."></textarea>
+                    <span class="hint">当前字符数: <span id="charCount">0</span> / 200,000</span>
+                </div>
+
+                <!-- 随机请求库 -->
+                <div class="mb-3 hidden" id="randomPromptGroup">
+                    <label class="muted" style="font-size:var(--fs-sm)">随机请求库 <span class="hint">系统会随机选取请求并在其基础上进行变化</span></label>
+                    <div class="mt-2" id="promptList">
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="请详细分析新能源汽车动力电池技术的发展现状和主要瓶颈，包括快充技术和低温性能等方面">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="能否深入探讨量子计算技术的基本原理，以及它相比经典计算机在密码学和药物研发中的优势">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="请分析区块链技术在供应链管理、金融科技和数字身份认证中的实际应用案例和发展趋势">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="深度学习在自然语言处理领域取得了哪些突破性进展，请结合主流模型架构进行说明">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="请解释5G和6G移动通信技术的核心差异，以及对物联网和智慧城市建设的影响">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="机器学习模型在实际部署中面临哪些伦理和隐私保护问题，应该如何制定相应的监管政策">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="请分析云原生技术架构的演进历程，包括容器化、微服务和Serverless等关键技术的特点">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="能否介绍边缘计算与传统云计算的区别，以及在工业互联网和自动驾驶中的应用场景">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="请探讨计算机视觉技术在安防监控、自动驾驶和医疗影像分析中的最新研究成果和实践经验">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                        <div class="prompt-item">
+                            <input type="text" class="input random-prompt" value="请详细介绍载人航天任务的主要技术挑战，包括生命保障、再入返回和深空通信等方面">
+                            <button class="btn btn-danger btn-sm" onclick="removePromptField(this)" type="button">删除</button>
+                        </div>
+                    </div>
+                    <button class="btn btn-success btn-sm mt-2" onclick="addPromptField()" type="button">+ 添加请求</button>
+                </div>
+
+                <!-- 模板请求 -->
+                <div class="field mb-3 hidden" id="templateGroup">
+                    <label class="req">请求模板</label>
+                    <textarea class="textarea" id="promptTemplate" style="min-height:110px" placeholder="你好，这是第 {{seq}} 条请求，随机码 {{random:12}}"></textarea>
+                    <div class="flex items-center gap-2 flex-wrap mt-2" id="templateVarChips">
+                        <span class="hint">点击插入变量：</span>
+                        <button class="var-chip" data-var="{{seq}}" type="button">{{seq}} 序号</button>
+                        <button class="var-chip" data-var="{{uuid}}" type="button">{{uuid}} UUID</button>
+                        <button class="var-chip" data-var="{{timestamp}}" type="button">{{timestamp}} 毫秒时间戳</button>
+                        <button class="var-chip" data-var="{{date}}" type="button">{{date}} 日期时间</button>
+                        <button class="var-chip" data-var="{{random}}" type="button">{{random}} 随机串</button>
+                        <button class="var-chip" data-var="{{random:16}}" type="button">{{random:N}} 指定长度</button>
+                    </div>
+                    <span class="hint">当前字符数: <span id="tplCount">0</span></span>
+                </div>
+
+                <!-- 压测数据集 -->
+                <div class="mb-3 hidden" id="datasetGroup">
+                    <div class="field">
+                        <label>内置数据集</label>
+                        <select class="select" id="datasetId">
+                            <option value="">加载中...</option>
+                        </select>
+                        <span class="hint" id="datasetHint">不同场景的瓶颈不同：短入短出测 RPM 上限，长入测 prefill，长出测 decode 吞吐</span>
+                    </div>
+                    <div class="field mt-3">
+                        <label>自定义数据集导入（可选）</label>
+                        <textarea class="textarea" id="datasetImport" style="min-height:100px" placeholder="粘贴 CSV / JSONL / JSON 数组 / 每行一条请求..."></textarea>
+                        <div class="flex gap-2 items-center mt-2 flex-wrap">
+                            <button class="btn btn-success btn-sm" id="parseImportBtn" type="button">解析导入</button>
+                            <span class="hint" id="datasetImportHint">解析成功后将替代上面的内置数据集（最多 500 条）</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 请求复用率 -->
+                <div class="field hidden" id="reuseRatioGroup">
+                    <label>请求复用率：<span id="reuseRatioValue">0%</span></label>
+                    <input type="range" id="reuseRatio" min="0" max="100" step="5" value="0" style="padding:0;width:100%">
+                    <span class="hint">0% = 每次都是全新请求（无前缀缓存命中，反映真实/最坏情况，用于容量规划）；100% = 反复使用同一批请求（缓存命中，反映上限，用于验证缓存是否生效）。两档结果都有效，但必须在报告里注明复用率，否则数字不可比。</span>
+                </div>
+            </div>
+        </details>
+
+        <!-- 分组 4：判定阈值 -->
+        <details class="cfg-group" open>
+            <summary><span class="g-dot"></span>判定阈值<span class="g-sub">响应断言 / 熔断阈值 / SLA / 高级选项</span><span class="g-caret">▾</span></summary>
+            <div class="cfg-body">
+                <!-- 响应断言 -->
+                <div class="mb-2 muted" style="font-size:var(--fs-sm)">响应断言 <span class="hint">成功响应还需满足的内容校验，不满足计入失败（assertionFailures）</span></div>
+                <div id="assertList"></div>
+                <button class="btn btn-success btn-sm" id="addAssertionBtn" type="button">+ 添加断言</button>
+
+                <div class="divider"></div>
+
+                <!-- 熔断阈值（安全阀） -->
+                <div id="autoThresholdGroup">
+                    <div class="mb-2 muted" style="font-size:var(--fs-sm)">熔断阈值（安全阀）</div>
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label>成功率阈值 (%)</label>
+                            <input type="number" class="input" id="successThreshold" value="75" min="0" max="100" step="1">
+                            <span class="hint">低于此成功率判定过载，<b>0 表示不判定</b></span>
+                            <span class="hint text-danger hidden" id="successThresholdError"></span>
+                        </div>
+                        <div class="field">
+                            <label>最大连续失败次数</label>
+                            <input type="number" class="input" id="maxFailures" value="20" min="0" step="1">
+                            <span class="hint">连续失败达到此次数判定过载，<b>0 表示不判定</b></span>
+                            <span class="hint text-danger hidden" id="maxFailuresError"></span>
+                        </div>
+                        <div class="field">
+                            <label>平均响应时间阈值（ms）</label>
+                            <input type="number" class="input" id="latencyThreshold" value="150000" min="0" step="1000">
+                            <span class="hint">超过此值判定过载并中止整场压测</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SLA 判定标准 -->
+                <div id="slaGroup">
+                    <div class="mb-2 muted" style="font-size:var(--fs-sm)">SLA 判定标准（这一档能不能承载）</div>
+                    <div class="form-grid mb-3">
+                        <div class="field">
+                            <label>成功率下限 (%)</label>
+                            <input type="number" class="input" id="slaSuccess" value="99" min="0" max="100" step="0.5">
+                        </div>
+                        <div class="field">
+                            <label>TTFT P99 上限（ms）</label>
+                            <input type="number" class="input" id="slaTtft" value="1000" min="0" step="50">
+                            <span class="hint">判 RPM 上限用它 —— 首 token 延迟与输出长度无关</span>
+                        </div>
+                        <div class="field">
+                            <label>TPOT P99 上限（ms/输出token）</label>
+                            <input type="number" class="input" id="slaTpot" value="50" min="0" step="5">
+                            <span class="hint">判 TPM 上限用它 —— 反映解码速度是否可接受</span>
+                        </div>
+                        <div class="field">
+                            <label>建议容量折算比例</label>
+                            <input type="number" class="input" id="capacityRatio" value="0.7" min="0.1" max="1" step="0.05">
+                            <span class="hint">通常按 70% 余量给出"建议承载容量"</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 高级选项 -->
+                <div class="mb-2 muted" style="font-size:var(--fs-sm)">高级选项</div>
+                <div class="form-grid">
+                    <div class="field">
+                        <label>Webhook 通知地址</label>
+                        <input type="text" class="input" id="webhookUrl" placeholder="https://example.com/hook/xxx">
+                        <span class="hint">测试结束后服务端会向该地址回调测试结果</span>
+                    </div>
+                    <div class="field">
+                        <label>输入单价 / 每百万 token</label>
+                        <input type="number" class="input" id="inputPrice" placeholder="选填" min="0" step="0.0001">
+                        <span class="hint">按你的计费币种填写，用于成本估算</span>
+                    </div>
+                    <div class="field">
+                        <label>输出单价 / 每百万 token</label>
+                        <input type="number" class="input" id="outputPrice" placeholder="选填" min="0" step="0.0001">
+                        <span class="hint">填写后结果与历史记录会展示预估成本</span>
+                    </div>
+                </div>
+            </div>
+        </details>
+
+        <!-- 底部操作 -->
+        <div class="cfg-foot">
+            <div class="foot-hint">压测任务在服务端后台执行，关闭浏览器不影响测试进行，重新打开页面即可查看实时进度。配置会自动保存在浏览器本地。</div>
+            <div class="flex gap-2">
+                <button class="btn btn-ghost btn-lg" id="preflightBtn" type="button" title="先发一次真实请求，验证地址 / 密钥 / 模型是否可用">连通测试</button>
+                <button class="btn btn-primary btn-lg" id="mainActionBtn" data-action="start" type="button">▶ 启动压测</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ ② 实时监控 ============ -->
+    <section class="card" id="monitorCard">
+        <div class="card-head-row">
+            <div>
+                <div class="card-title"><span class="dot muted" id="statusDot"></span><span id="statusText">准备就绪</span></div>
+                <div class="flex flex-wrap gap-2 mt-2" id="runChips"></div>
+            </div>
+            <div class="head-actions flex flex-wrap items-center gap-3">
+                <span class="live-read" id="liveRPM">RPM 0</span>
+                <span class="live-read tpm" id="liveTPM">TPM 0</span>
+                <button class="btn btn-danger btn-sm" id="clearLogsBtn" type="button">清除日志</button>
+            </div>
+        </div>
+
+        <!-- 预热倒计时 -->
+        <div class="flow-bar hidden" id="warmupBar">
+            <div class="fb-label">
+                <span class="dot warning pulse"></span>
+                <b class="text-warning">预热中</b>
+                <span class="muted">剩余 <b id="warmupLeft" class="mono">-</b> · 预热期请求不计入正式统计</span>
+                <span class="muted flex-1" style="text-align:right" id="warmupCounts"></span>
+            </div>
+            <div class="progress thin mt-2"><div class="bar" id="warmupFill" style="width:0%"></div></div>
+        </div>
+
+        <!-- 并发阶梯进度 -->
+        <div class="flow-bar hidden" id="ladderBar">
+            <div class="fb-label">
+                <span class="dot accent pulse"></span>
+                <b class="text-accent">并发阶梯</b>
+                <span id="ladderText" class="muted"></span>
+            </div>
+            <div class="progress thin mt-2"><div class="bar" id="ladderFill" style="width:0%"></div></div>
+        </div>
+
+        <!-- 核心指标（8 个关键指标） -->
+        <div class="stat-grid mt-2">
+            <div class="stat-card accent">
+                <div class="stat-label">实时 RPM</div>
+                <div class="stat-value" id="stRpm">0</div>
+                <div class="stat-foot" id="stTargetRpm">目标 -</div>
+            </div>
+            <div class="stat-card good">
+                <div class="stat-label">成功率</div>
+                <div class="stat-value" id="stSuccess">100%</div>
+                <div class="stat-foot" id="stSuccessCount">成功 0 / 失败 0</div>
+            </div>
+            <div class="stat-card bad">
+                <div class="stat-label">P99 延迟</div>
+                <div class="stat-value" id="stP99">-</div>
+                <div class="stat-foot" id="stAvgLatency">平均 -</div>
+            </div>
+            <div class="stat-card warn">
+                <div class="stat-label">TTFT P99</div>
+                <div class="stat-value" id="stTtft">-</div>
+                <div class="stat-foot" id="stTtfbP95">P95 -</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">TPM（近 60 秒）</div>
+                <div class="stat-value" id="stTpm">0</div>
+                <div class="stat-foot" id="stTpmSplit">入 0 / 出 0</div>
+            </div>
+            <div class="stat-card accent">
+                <div class="stat-label">在途并发</div>
+                <div class="stat-value" id="stInFlight">0</div>
+                <div class="stat-foot" id="stPeak">峰值 0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Token 总量</div>
+                <div class="stat-value" id="stTokens">0</div>
+                <div class="stat-foot" id="stAvgTpmFoot">平均 TPM 0</div>
+            </div>
+            <div class="stat-card bad">
+                <div class="stat-label">断言失败</div>
+                <div class="stat-value" id="stAssert">0</div>
+                <div class="stat-foot" id="stSkippedFoot">跳过 0</div>
+            </div>
+        </div>
+
+        <!-- 详细指标 -->
+        <details class="cfg-group mt-3" id="metricsGroup">
+            <summary><span class="g-dot"></span>详细指标<span class="g-sub">延迟分位 / 吞吐并发 / 本分钟统计</span><span class="g-caret">▾</span></summary>
+            <div class="cfg-body">
+                <div class="chart-block-title">延迟与质量</div>
+                <div class="stat-grid">
+                    <div class="stat-card"><div class="stat-label">端到端 P50</div><div class="stat-value" id="stP50">-</div></div>
+                    <div class="stat-card"><div class="stat-label">端到端 P90</div><div class="stat-value" id="stP90">-</div></div>
+                    <div class="stat-card warn"><div class="stat-label">端到端 P95</div><div class="stat-value" id="stP95">-</div></div>
+                    <div class="stat-card bad"><div class="stat-label">失败请求 P95</div><div class="stat-value" id="stFailP95">-</div></div>
+                    <div class="stat-card"><div class="stat-label">TPOT P95</div><div class="stat-value" id="stTpotP95">-</div><div class="stat-foot">ms/输出token</div></div>
+                    <div class="stat-card"><div class="stat-label">TPOT P99</div><div class="stat-value" id="stTpotP99">-</div><div class="stat-foot">ms/输出token</div></div>
+                </div>
+                <div class="chart-block-title mt-3">吞吐与并发</div>
+                <div class="stat-grid">
+                    <div class="stat-card"><div class="stat-label">总请求数</div><div class="stat-value" id="stTotal">0</div></div>
+                    <div class="stat-card"><div class="stat-label">实际完成 RPM</div><div class="stat-value" id="stActualRpm">0</div><div class="stat-foot">近 60 秒</div></div>
+                    <div class="stat-card"><div class="stat-label">平均并发</div><div class="stat-value" id="stAvgConc">0</div><div class="stat-foot">Little's Law</div></div>
+                    <div class="stat-card"><div class="stat-label">实际请求复用率</div><div class="stat-value" id="stReuse">0%</div></div>
+                    <div class="stat-card bad"><div class="stat-label">因并发上限跳过</div><div class="stat-value" id="stSkipped">0</div></div>
+                    <div class="stat-card bad"><div class="stat-label">中止时在途请求</div><div class="stat-value" id="stAbandoned">0</div></div>
+                    <div class="stat-card"><div class="stat-label">本档 output TPM</div><div class="stat-value" id="stStageOut">0</div></div>
+                    <div class="stat-card good"><div class="stat-label">当前档位 SLA</div><div class="stat-value" id="stSla">-</div></div>
+                </div>
+                <div class="chart-block-title mt-3">Token 与本分钟统计</div>
+                <div class="stat-grid">
+                    <div class="stat-card"><div class="stat-label">平均 TPM（累计）</div><div class="stat-value" id="stAvgTpm">0</div></div>
+                    <div class="stat-card"><div class="stat-label">输入 TPM（实时）</div><div class="stat-value" id="stInTpm">0</div></div>
+                    <div class="stat-card"><div class="stat-label">输出 TPM（实时）</div><div class="stat-value" id="stOutTpm">0</div></div>
+                    <div class="stat-card good"><div class="stat-label">平均生成速度</div><div class="stat-value" id="stTokSpeed">0</div><div class="stat-foot">tok/s</div></div>
+                    <div class="stat-card accent"><div class="stat-label">本分钟请求数</div><div class="stat-value" id="mTotal">0</div></div>
+                    <div class="stat-card"><div class="stat-label">本分钟 Token</div><div class="stat-value" id="mTokens">0</div></div>
+                    <div class="stat-card good"><div class="stat-label">本分钟成功率</div><div class="stat-value" id="mSuccess">100%</div><div class="stat-foot" id="mFail">失败率 0%</div></div>
+                    <div class="stat-card accent"><div class="stat-label">累计运行时间</div><div class="stat-value" id="totalTimer">00:00:00</div></div>
+                </div>
+            </div>
+        </details>
+
+        <!-- 吞吐图表 -->
+        <div class="mt-4">
+            <div class="chart-block-title">吞吐曲线（实时采样）</div>
+            <div class="chart-legend">
+                <span class="lg"><i style="background:#22d3ee"></i>RPM</span>
+                <span class="lg"><i style="background:#a78bfa"></i>TPM</span>
+                <span class="muted">左轴 RPM · 右轴 TPM · 每 2 秒采样一次</span>
+            </div>
+            <div class="chart-holder">
+                <svg id="tpChart" viewBox="0 0 1000 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="吞吐曲线"></svg>
+                <div id="chartPlaceholder" class="empty-state hidden">开始压测后将显示吞吐曲线</div>
+            </div>
+        </div>
+        <div class="mt-3">
+            <div class="chart-block-title">每分钟请求统计（成功 / 失败）</div>
+            <div class="chart-legend">
+                <span class="lg"><i style="background:rgba(52,211,153,0.75)"></i>成功</span>
+                <span class="lg"><i style="background:rgba(248,113,113,0.75)"></i>失败</span>
+            </div>
+            <div class="chart-holder">
+                <svg id="minChart" viewBox="0 0 1000 190" preserveAspectRatio="xMidYMid meet" role="img" aria-label="每分钟请求统计"></svg>
+                <div id="minChartPh" class="empty-state hidden">暂无分钟统计数据</div>
+            </div>
+        </div>
+
+        <!-- 日志 Tabs -->
+        <div class="tabs mt-4" id="logTabs">
+            <button class="tab active" data-tab="reqlog" type="button">请求日志 <span class="badge muted" id="reqlogCount">0</span></button>
+            <button class="tab" data-tab="errsum" type="button">错误统计 <span class="badge danger hidden" id="errsumCount">0</span></button>
+            <button class="tab" data-tab="errlog" type="button">错误日志</button>
+            <button class="tab" data-tab="minstat" type="button">分钟统计</button>
+        </div>
+
+        <!-- 请求日志 -->
+        <div id="pane-reqlog">
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>时间</th><th>状态</th><th>方式</th><th class="num">状态码</th>
+                            <th class="num">耗时</th><th class="num">TTFB</th><th class="num">Tokens</th>
+                            <th>模型</th><th>错误信息</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reqLogBody"></tbody>
+                </table>
+            </div>
+            <div class="empty-state" id="reqLogEmpty">暂无请求日志</div>
+        </div>
+
+        <!-- 错误统计 -->
+        <div id="pane-errsum" class="hidden">
+            <div id="errSummary" class="empty-state">暂无错误</div>
+        </div>
+
+        <!-- 错误日志 -->
+        <div id="pane-errlog" class="hidden">
+            <div id="errLogs" class="empty-state">暂无错误日志</div>
+        </div>
+
+        <!-- 分钟统计 -->
+        <div id="pane-minstat" class="hidden">
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr><th>时间</th><th class="num">请求数</th><th class="num">成功</th><th class="num">失败</th><th class="num">RPM</th><th class="num">Token（TPM）</th></tr>
+                    </thead>
+                    <tbody id="minStatBody"></tbody>
+                </table>
+            </div>
+            <div class="empty-state hidden" id="minStatEmpty">暂无分钟统计数据</div>
+        </div>
+    </section>
+
+    <!-- ============ ③ 结果评估 ============ -->
+    <section class="card hidden" id="resultCard">
+        <div class="card-head-row">
+            <div>
+                <div class="card-title">评估结果</div>
+                <div class="card-desc" id="resultSla">-</div>
+            </div>
+            <div class="head-actions"><span class="badge muted" id="slaBadge">-</span></div>
+        </div>
+        <div class="stat-grid">
+            <div class="stat-card accent"><div class="stat-label">最大可持续 RPM</div><div class="stat-value" id="rMaxRpm">-</div></div>
+            <div class="stat-card"><div class="stat-label">最大可持续 TPM（输出）</div><div class="stat-value" id="rMaxTpm" style="color:#a78bfa">-</div></div>
+            <div class="stat-card good"><div class="stat-label">建议承载 RPM</div><div class="stat-value" id="rRecRpm">-</div></div>
+            <div class="stat-card good"><div class="stat-label">建议承载 TPM</div><div class="stat-value" id="rRecTpm">-</div></div>
+            <div class="stat-card hidden" id="rCostCard"><div class="stat-label">预估成本（本轮）</div><div class="stat-value" id="rCost">-</div></div>
+        </div>
+        <div class="note mt-3 hidden" id="probeNote"></div>
+    </section>
+
+</div>
+
+<script src="/assets/js/i18n.js"></script>
+<script src="/assets/js/i18n/en.common.js"></script>
+<script src="/assets/js/i18n/en.dashboard.js"></script>
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ws.js"></script>
+<script src="/assets/js/layout.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    // ===================== 工具 =====================
+    const el = (id) => document.getElementById(id);
+    const p2 = (n) => String(n).padStart(2, '0');
+    const show = (id, visible) => { const n = el(id); if (n) n.classList.toggle('hidden', !visible); };
+
+    function numValue(id, fallback = 0) {
+        const v = parseInt(el(id).value, 10);
+        return Number.isFinite(v) ? v : fallback;
+    }
+
+    function fmtClock(ms) {
+        const s = Math.max(0, Math.floor(ms / 1000));
+        return `${p2(Math.floor(s / 3600))}:${p2(Math.floor(s / 60) % 60)}:${p2(s % 60)}`;
+    }
+
+    function getModeText(mode) {
+        return {
+            fixed: '固定压测', auto: '自动增压', concurrency: '恒定并发',
+            'concurrency-ramp': '并发阶梯', seek: '自动寻优', probe: '能力探测',
+        }[mode] || mode || '-';
+    }
+
+    function getPromptModeText(mode) {
+        return { fixed: '固定请求', random: '随机请求', dataset: '压测数据集', template: '模板请求' }[mode] || mode || '-';
+    }
+
+    function getGoalText(goal) {
+        return { rpm: 'RPM 上限', tpm: 'TPM 上限', probe: '一键能力探测', custom: '自定义' }[goal] || goal || '-';
+    }
+
+    function formatRatio(value) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return '0%';
+        return `${Math.round(num * 10000) / 100}%`;
+    }
+
+    // ===================== 全局状态 =====================
+    let user = null;
+    let isAdmin = false;
+    let currentProvider = 'openai';
+    let currentMode = 'fixed';        // 加压模式
+    let currentPromptMode = 'fixed';  // 请求模式
+    let currentRequestType = 'stream';
+    let currentGoal = 'probe';        // 测试目标
+    let lastState = null;
+
+    let datasets = [];
+    let customDatasetItems = null;
+    let presets = [];
+
+    let running = false;
+    let otherRunning = false;
+
+    // 请求日志（本地，最新在前，最多 200 条）
+    let reqLogs = [];
+    let logsHydrated = false;
+
+    // 吞吐曲线采样（每 2 秒一点，最多 240 点）
+    let throughputSeries = [];
+    const MAX_POINTS = 240;
+    let lastChartRender = 0;
+
+    let totalTimerInterval = null;
+    let testStartTime = null;
+
+    // ===================== 测试目标预设 =====================
+    const GOAL_PRESETS = {
+        rpm: { mode: 'seek', promptMode: 'dataset', datasetId: 'short-short' },
+        tpm: { mode: 'concurrency-ramp', promptMode: 'dataset', datasetId: 'short-in-long-out' },
+        probe: { mode: 'probe', promptMode: 'dataset', datasetId: null },
+    };
+
+    // ===================== 选择器 =====================
+    function selectProvider(provider) {
+        // 兼容旧配置里的 anthropic 写法
+        if (provider === 'anthropic') provider = 'claude';
+        currentProvider = provider;
+        document.querySelectorAll('#providerCards .opt-card').forEach((c) => {
+            c.classList.toggle('active', c.dataset.provider === provider);
+        });
+        updateProviderHints();
+    }
+
+    function selectRequestType(type) {
+        currentRequestType = type === 'non-stream' ? 'non-stream' : 'stream';
+        document.querySelectorAll('#requestTypeSeg .seg-item').forEach((b) => {
+            b.classList.toggle('active', b.dataset.type === currentRequestType);
+        });
+    }
+
+    function selectMode(mode) {
+        currentMode = mode;
+        document.querySelectorAll('#modeCards .opt-card').forEach((c) => {
+            c.classList.toggle('active', c.dataset.mode === mode);
+        });
+        applyRPMModeUI();
+    }
+
+    function selectPromptMode(mode) {
+        currentPromptMode = mode;
+        document.querySelectorAll('#promptModeCards .opt-card').forEach((c) => {
+            c.classList.toggle('active', c.dataset.mode === mode);
+        });
+        applyPromptModeUI();
+    }
+
+    function selectGoal(goal) {
+        currentGoal = goal;
+        document.querySelectorAll('#goalCards .opt-card').forEach((c) => {
+            c.classList.toggle('active', c.dataset.goal === goal);
+        });
+        applyGoalPreset(goal);
+    }
+
+    function applyGoalPreset(goal) {
+        const preset = GOAL_PRESETS[goal];
+        if (!preset) { renderGoalHint(); return; }
+        selectMode(preset.mode);
+        selectPromptMode(preset.promptMode);
+        // 能力类测试要的是真实容量，默认不做请求复用（避免缓存命中抬高结果）
+        el('reuseRatio').value = 0;
+        el('reuseRatioValue').textContent = '0%';
+        if (preset.datasetId) {
+            const select = el('datasetId');
+            if (Array.from(select.options).some((o) => o.value === preset.datasetId)) {
+                select.value = preset.datasetId;
+                updateDatasetHint();
+            }
+        }
+        renderGoalHint();
+    }
+
+    function renderGoalHint() {
+        const hint = el('goalHint');
+        const text = {
+            rpm: '将用「短入短出」数据集 + 自动寻优：从起始 RPM 逐级上探，<b>成功率与 TTFT P99 同时达标</b>的最高档位即为最大可持续 RPM。',
+            tpm: '将用「短入长出」数据集 + 并发阶梯：并发逐档上升，<b>output TPM 增幅低于阈值</b>或 TPOT P99 超限即为饱和点，该档吞吐即最大可持续 TPM。',
+            probe: '一键跑两轮：先求最大可持续 RPM，再求最大可持续 TPM，并给出建议承载容量。总时长 ≈ 档位数 × 每档时长 × 2，可先把每档时长调小快速试跑一遍。',
+            custom: '',
+        }[currentGoal] || '';
+        if (!text) { hint.classList.add('hidden'); return; }
+        hint.classList.remove('hidden');
+        hint.innerHTML = `<b>当前目标：</b>${text}`;
+    }
+
+    // 根据加压模式显示/隐藏对应参数区
+    function applyRPMModeUI() {
+        const isProbe = currentMode === 'probe';
+        show('fixedRPMGroup', currentMode === 'fixed');
+        show('autoRPMGroup', currentMode === 'auto');
+        show('concurrencyGroup', currentMode === 'concurrency');
+        // 能力探测依次用到寻优与并发阶梯，两套参数都要展示
+        show('ladderGroup', currentMode === 'concurrency-ramp' || isProbe);
+        show('seekGroup', currentMode === 'seek' || isProbe);
+        // 预热期仅固定 / 自动增压 / 恒定并发支持
+        show('warmupGroup', ['fixed', 'auto', 'concurrency'].includes(currentMode));
+        // 固定压测不做熔断与达标判定，无需展示阈值
+        show('autoThresholdGroup', currentMode !== 'fixed');
+        show('slaGroup', currentMode !== 'fixed');
+    }
+
+    // 根据请求模式显示/隐藏对应参数区
+    function applyPromptModeUI() {
+        show('fixedPromptGroup', currentPromptMode === 'fixed');
+        show('randomPromptGroup', currentPromptMode === 'random');
+        show('templateGroup', currentPromptMode === 'template');
+        show('datasetGroup', currentPromptMode === 'dataset');
+        // 固定请求模式的复用率恒为 100%，无需调节
+        show('reuseRatioGroup', currentPromptMode !== 'fixed');
+    }
+
+    function updateProviderHints() {
+        const urlInput = el('url');
+        const modelInput = el('modelName');
+        const urlHint = el('urlHint');
+        const modelHint = el('modelHint');
+        const apiKeyHint = el('apiKeyHint');
+
+        if (currentProvider === 'openai') {
+            urlInput.placeholder = 'https://api.openai.com';
+            modelInput.placeholder = 'gpt-4o';
+            urlHint.textContent = 'OpenAI 官方地址或兼容 OpenAI 协议的网关 / 中转地址（无需 /v1 后缀）';
+            modelHint.textContent = '示例：gpt-4o, gpt-4o-mini, gpt-3.5-turbo 及兼容模型';
+            apiKeyHint.textContent = '通常为 sk- 开头的密钥';
+        } else if (currentProvider === 'responses') {
+            urlInput.placeholder = 'https://api.openai.com';
+            modelInput.placeholder = 'gpt-4o';
+            urlHint.textContent = 'OpenAI Responses 接口地址（无需 /v1 后缀），兼容该协议的服务同样适用';
+            modelHint.textContent = '示例：gpt-4o, gpt-4o-mini 及支持 /v1/responses 的模型';
+            apiKeyHint.textContent = '通常为 sk- 开头的密钥';
+        } else if (currentProvider === 'claude' || currentProvider === 'anthropic') {
+            urlInput.placeholder = 'https://api.anthropic.com';
+            modelInput.placeholder = 'claude-3-5-sonnet-20241022';
+            urlHint.textContent = 'Anthropic 官方地址或兼容 Anthropic 协议的网关地址（无需 /v1 后缀）';
+            modelHint.textContent = '示例：claude-3-5-sonnet-20241022, claude-3-opus-20240229';
+            apiKeyHint.textContent = '通常为 sk-ant- 开头的密钥';
+        } else if (currentProvider === 'gemini') {
+            urlInput.placeholder = 'https://generativelanguage.googleapis.com';
+            modelInput.placeholder = 'gemini-1.5-flash';
+            urlHint.textContent = '示例：https://generativelanguage.googleapis.com';
+            modelHint.textContent = '示例：gemini-1.5-flash, gemini-1.5-pro';
+            apiKeyHint.textContent = '从 Google AI Studio 获取';
+        }
+    }
+
+    // ===================== 随机请求库 =====================
+    function addPromptField() {
+        const list = el('promptList');
+        const item = document.createElement('div');
+        item.className = 'prompt-item';
+        item.innerHTML = `
+            <input type="text" class="input random-prompt" placeholder="输入测试请求...">
+            <button class="btn btn-danger btn-sm" type="button" onclick="removePromptField(this)">删除</button>`;
+        list.appendChild(item);
+    }
+
+    function removePromptField(btn) { btn.parentElement.remove(); }
+    window.removePromptField = removePromptField;
+    window.addPromptField = addPromptField;
+
+    function getRandomPrompts() {
+        const prompts = [];
+        document.querySelectorAll('.random-prompt').forEach((input) => {
+            const v = input.value.trim();
+            if (v) prompts.push(v);
+        });
+        return prompts;
+    }
+
+    // ===================== 字数统计 =====================
+    function bindCounter(textareaId, counterId, maxLen) {
+        const ta = el(textareaId);
+        const counter = el(counterId);
+        ta.addEventListener('input', () => {
+            counter.textContent = fmtInt(ta.value.length);
+            if (maxLen && ta.value.length > maxLen) {
+                counter.style.color = 'var(--danger)';
+                ta.value = ta.value.substring(0, maxLen);
+                counter.textContent = fmtInt(ta.value.length);
+            } else if (maxLen && ta.value.length > maxLen * 0.9) {
+                counter.style.color = 'var(--warning)';
+            } else {
+                counter.style.color = '';
+            }
+        });
+    }
+
+    function updateCounter(textareaId, counterId) {
+        el(counterId).textContent = fmtInt(el(textareaId).value.length);
+    }
+
+    // ===================== 模板变量插入 =====================
+    function insertVar(v) {
+        const ta = el('promptTemplate');
+        const s = ta.selectionStart || ta.value.length;
+        const e = ta.selectionEnd || s;
+        ta.value = ta.value.slice(0, s) + v + ta.value.slice(e);
+        ta.selectionStart = ta.selectionEnd = s + v.length;
+        ta.focus();
+        updateCounter('promptTemplate', 'tplCount');
+    }
+
+    // ===================== 响应断言编辑器 =====================
+    function addAssertionRow(data) {
+        data = data || {};
+        const list = el('assertList');
+        const row = document.createElement('div');
+        row.className = 'assert-row';
+        const type = data.type || 'contains';
+        const val = data.value === undefined || data.value === null ? '' : String(data.value);
+        row.innerHTML = `
+            <select class="select assert-type">
+                <option value="contains"${type === 'contains' ? ' selected' : ''}>包含</option>
+                <option value="not_contains"${type === 'not_contains' ? ' selected' : ''}>不包含</option>
+                <option value="regex"${type === 'regex' ? ' selected' : ''}>正则匹配</option>
+                <option value="min_length"${type === 'min_length' ? ' selected' : ''}>最小长度</option>
+            </select>
+            <input class="input assert-value" placeholder="${type === 'min_length' ? '最小字符数，如 50' : '匹配内容'}" value="${esc(val)}">
+            <label class="check-row" title="是否区分大小写"><input type="checkbox" class="assert-cs" ${data.caseSensitive === false ? '' : 'checked'}>区分大小写</label>
+            <button class="btn btn-danger btn-sm assert-del" type="button">删除</button>`;
+        row.querySelector('.assert-type').addEventListener('change', (e) => {
+            row.querySelector('.assert-value').placeholder =
+                e.target.value === 'min_length' ? '最小字符数，如 50' : '匹配内容';
+        });
+        row.querySelector('.assert-del').addEventListener('click', () => row.remove());
+        list.appendChild(row);
+    }
+
+    function collectAssertions() {
+        const out = [];
+        document.querySelectorAll('#assertList .assert-row').forEach((row) => {
+            const type = row.querySelector('.assert-type').value;
+            const raw = row.querySelector('.assert-value').value.trim();
+            const cs = row.querySelector('.assert-cs').checked;
+            if (type === 'min_length') {
+                const n = parseInt(raw, 10);
+                if (Number.isFinite(n) && n >= 0) out.push({ type, value: n, caseSensitive: cs });
+            } else if (raw) {
+                out.push({ type, value: raw, caseSensitive: cs });
+            }
+        });
+        return out;
+    }
+
+    // ===================== 数据集 =====================
+    async function loadDatasets() {
+        const select = el('datasetId');
+        try {
+            const data = await API.get('/api/datasets');
+            datasets = (data && data.datasets) || [];
+            select.innerHTML = datasets.map((d) =>
+                `<option value="${esc(String(d.id))}">${esc(d.name)}（约 ${fmtInt(d.inputTokens)} 入 / ${fmtInt(d.outputTokens)} 出 tok）</option>`
+            ).join('');
+            // 恢复上次选择的数据集
+            try {
+                const saved = JSON.parse(localStorage.getItem('llm_eval_config') || '{}');
+                if (saved.datasetId && Array.from(select.options).some((o) => o.value === saved.datasetId)) {
+                    select.value = saved.datasetId;
+                }
+            } catch (e) { /* 忽略本地配置解析失败 */ }
+            updateDatasetHint();
+        } catch (e) {
+            select.innerHTML = '<option value="">数据集加载失败</option>';
+        }
+    }
+
+    function updateDatasetHint() {
+        const select = el('datasetId');
+        const option = select.options[select.selectedIndex];
+        if (option && option.textContent) {
+            el('datasetHint').textContent = `当前数据集：${option.textContent}`;
+        }
+    }
+
+    async function parseDatasetImport() {
+        const content = el('datasetImport').value;
+        const hint = el('datasetImportHint');
+        if (!content.trim()) { toast.warning('请先粘贴要导入的数据内容'); return; }
+        hint.textContent = '解析中...';
+        try {
+            const data = await API.post('/api/datasets/parse', { content, limit: 500 });
+            customDatasetItems = data.items;
+            hint.textContent = `已解析 ${data.items.length} 条（格式：${data.format}），启动压测时将优先使用导入的数据`;
+            toast.success(`自定义数据集解析成功（${data.items.length} 条）`);
+        } catch (e) {
+            customDatasetItems = null;
+            hint.textContent = `解析失败：${e.message}`;
+            toast.error('数据集解析失败：' + e.message);
+        }
+    }
+
+    // ===================== 目标预设 =====================
+    async function loadPresets() {
+        try {
+            presets = (await API.get('/api/presets')) || [];
+        } catch (e) {
+            presets = [];
+            toast.error('预设加载失败：' + e.message);
+        }
+        const sel = el('presetSelect');
+        sel.innerHTML = '<option value="">选择目标预设…</option>' + presets.map((p) =>
+            `<option value="${esc(String(p.id))}">${esc(p.name)}（${esc(p.modelName)}）</option>`
+        ).join('');
+        el('presetDelBtn').disabled = true;
+    }
+
+    function applyPreset(id) {
+        const p = presets.find((x) => String(x.id) === String(id));
+        if (!p) { el('presetDelBtn').disabled = true; return; }
+        el('presetDelBtn').disabled = false;
+        el('url').value = p.url || '';
+        el('modelName').value = p.modelName || '';
+        el('apiKey').value = p.apiKey || '';
+        selectProvider(p.providerType || 'openai');
+        selectRequestType(p.requestType || 'stream');
+        el('testPrompt').value = p.testPrompt || '';
+        updateCounter('testPrompt', 'charCount');
+        const masked = (p.apiKey || '').includes('****');
+        toast.info(`已载入预设「${p.name}」${masked ? '（API Key 为脱敏串，启动前需重新输入完整 Key）' : ''}`);
+    }
+
+    async function saveAsPreset() {
+        const url = el('url').value.trim();
+        const modelName = el('modelName').value.trim();
+        const apiKey = el('apiKey').value.trim();
+        if (!url || !modelName) { toast.warning('请先填写 Base URL 与模型名称'); return; }
+        if (apiKey.includes('****')) {
+            toast.warning('当前 API Key 为脱敏串（来自预设），请重新输入完整 Key 后再保存预设');
+            el('apiKey').focus();
+            return;
+        }
+
+        const body = document.createElement('div');
+        body.innerHTML = `
+            <div class="field">
+                <label class="req">预设名称</label>
+                <input class="input" id="presetNameInput" placeholder="如：生产环境 gpt-4o" maxlength="50">
+                <span class="hint">将保存：${esc(url)} · ${esc(modelName)} · ${esc(currentProvider)} / ${esc(currentRequestType)}</span>
+            </div>`;
+        const foot = document.createElement('div');
+        foot.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+        const cancel = document.createElement('button');
+        cancel.className = 'btn btn-ghost';
+        cancel.textContent = '取消';
+        const ok = document.createElement('button');
+        ok.className = 'btn btn-primary';
+        ok.textContent = '保存';
+        foot.append(cancel, ok);
+
+        const m = Layout.modal({ title: '保存为预设', body, footer: foot });
+        const nameInput = body.querySelector('#presetNameInput');
+        nameInput.value = modelName;
+        nameInput.focus();
+        cancel.addEventListener('click', () => m.close());
+        ok.addEventListener('click', async () => {
+            const name = nameInput.value.trim();
+            if (!name) { toast.warning('请填写预设名称'); return; }
+            try {
+                const res = await API.post('/api/presets', {
+                    name,
+                    url,
+                    modelName,
+                    apiKey,
+                    providerType: currentProvider,
+                    requestType: currentRequestType,
+                    testPrompt: el('testPrompt').value.trim(),
+                });
+                toast.success(`预设「${name}」已保存`);
+                m.close();
+                await loadPresets();
+                if (res && res.id) el('presetSelect').value = String(res.id);
+                el('presetDelBtn').disabled = false;
+            } catch (e) {
+                toast.error('保存预设失败：' + e.message);
+            }
+        });
+    }
+
+    async function deletePreset() {
+        const id = el('presetSelect').value;
+        if (!id) return;
+        const p = presets.find((x) => String(x.id) === String(id));
+        if (!p) return;
+        const ok = await Layout.confirmDialog(`确定删除预设 <b>${esc(p.name)}</b>？`, { danger: true, okText: '删除' });
+        if (!ok) return;
+        try {
+            await API.del(`/api/presets/${id}`);
+            toast.success('预设已删除');
+            await loadPresets();
+        } catch (e) {
+            toast.error('删除预设失败：' + e.message);
+        }
+    }
+
+    // ===================== 配置收集 / 校验 =====================
+    function validateThresholdConfig() {
+        let ok = true;
+        const stVal = parseFloat(el('successThreshold').value);
+        const stErr = el('successThresholdError');
+        if (isNaN(stVal) || stVal < 0 || stVal > 100) {
+            stErr.textContent = '成功率阈值必须在 0-100 之间';
+            stErr.classList.remove('hidden');
+            ok = false;
+        } else {
+            stErr.classList.add('hidden');
+        }
+        const mfVal = parseFloat(el('maxFailures').value);
+        const mfErr = el('maxFailuresError');
+        if (isNaN(mfVal) || mfVal < 0 || !Number.isInteger(mfVal)) {
+            mfErr.textContent = '最大连续失败次数必须为非负整数';
+            mfErr.classList.remove('hidden');
+            ok = false;
+        } else {
+            mfErr.classList.add('hidden');
+        }
+        return ok;
+    }
+
+    // 汇总当前表单为一次压测请求
+    function collectTestConfig() {
+        const config = {
+            providerType: currentProvider,
+            mode: currentMode,
+            goal: currentGoal,
+            url: el('url').value.trim(),
+            modelName: el('modelName').value.trim(),
+            apiKey: el('apiKey').value.trim(),
+            requestType: currentRequestType,
+            promptMode: currentPromptMode,
+            testDuration: 0,
+            warmupDuration: Math.min(600, Math.max(0, numValue('warmupDuration', 0))),
+            successThreshold: numValue('successThreshold'),
+            maxFailures: numValue('maxFailures'),
+            latencyThreshold: numValue('latencyThreshold'),
+            assertions: collectAssertions(),
+            webhookUrl: el('webhookUrl').value.trim(),
+            // 每百万 token 单价（选填，用于成本估算）
+            inputPrice: parseFloat(el('inputPrice').value) || 0,
+            outputPrice: parseFloat(el('outputPrice').value) || 0,
+        };
+
+        // 固定请求模式下的复用率恒为 100%（所有请求内容完全一致）
+        config.promptReuseRatio = currentPromptMode === 'fixed'
+            ? 1
+            : (numValue('reuseRatio') / 100);
+
+        if (currentPromptMode === 'fixed') {
+            config.testPrompt = el('testPrompt').value.trim();
+        } else if (currentPromptMode === 'random') {
+            config.randomPrompts = getRandomPrompts();
+        } else if (currentPromptMode === 'template') {
+            config.promptTemplate = el('promptTemplate').value;
+        } else if (currentPromptMode === 'dataset') {
+            if (customDatasetItems && customDatasetItems.length > 0) {
+                config.datasetItems = customDatasetItems;
+                config.datasetName = '自定义导入数据集';
+            } else {
+                config.datasetId = el('datasetId').value;
+            }
+        }
+
+        if (currentMode === 'fixed') {
+            config.rpm = numValue('fixedRPM', 1);
+            config.testDuration = numValue('testDuration');
+        } else if (currentMode === 'auto') {
+            config.rpm = numValue('autoRPM', 10);
+            config.rampVariant = el('rampVariant').value;
+            config.incrementRPM = numValue('incrementRPM', 10);
+            config.incrementInterval = numValue('incrementInterval', 60);
+            config.rampDuration = numValue('rampDuration', 10);
+            config.maxRPM = numValue('maxRPM', 1000);
+        } else if (currentMode === 'concurrency') {
+            config.rpm = 1; // 闭环模式下 RPM 由服务端实测得出，此处仅满足参数校验
+            config.concurrency = numValue('concurrency', 8);
+            config.testDuration = numValue('concurrencyDuration');
+        } else if (currentMode === 'seek') {
+            config.rpm = numValue('seekRPM', 10);
+            config.incrementRPM = numValue('seekIncrementRPM', 20);
+            config.stepDuration = numValue('seekStepDuration', 60);
+            config.maxRPM = numValue('seekMaxRPM', 1000);
+        } else if (currentMode === 'concurrency-ramp') {
+            config.rpm = 1;
+            config.concurrencyStart = numValue('concurrencyStart', 1);
+            config.concurrencyMax = numValue('concurrencyMax', 16);
+            config.concurrencyMultiplier = parseFloat(el('concurrencyMultiplier').value) || 2;
+            config.stepDuration = numValue('ladderStepDuration', 60);
+            config.testDuration = 0;
+        } else if (currentMode === 'probe') {
+            // 能力探测：RPM 阶段用寻优参数，TPM 阶段用并发阶梯参数
+            config.rpm = numValue('seekRPM', 10);
+            config.incrementRPM = numValue('seekIncrementRPM', 50);
+            config.stepDuration = numValue('seekStepDuration', 60);
+            config.maxRPM = numValue('seekMaxRPM', 1000);
+            config.concurrencyStart = numValue('concurrencyStart', 1);
+            config.concurrencyMax = numValue('concurrencyMax', 16);
+            config.concurrencyMultiplier = parseFloat(el('concurrencyMultiplier').value) || 2;
+            config.testDuration = 0;
+        }
+
+        // SLA 判定标准：判"这一档能不能承载"
+        config.sla = {
+            successThreshold: numValue('slaSuccess', 99),
+            ttftP99Threshold: numValue('slaTtft', 1000),
+            tpotP99Threshold: numValue('slaTpot', 50),
+            capacityRatio: parseFloat(el('capacityRatio').value) || 0.7,
+        };
+
+        return config;
+    }
+
+    // ===================== 本地配置持久化 =====================
+    function saveConfig() {
+        const config = {
+            providerType: currentProvider,
+            url: el('url').value.trim(),
+            modelName: el('modelName').value.trim(),
+            apiKey: el('apiKey').value.trim(),
+            testPrompt: el('testPrompt').value.trim(),
+            promptTemplate: el('promptTemplate').value,
+            fixedRPM: el('fixedRPM').value,
+            autoRPM: el('autoRPM').value,
+            testDuration: el('testDuration').value,
+            warmupDuration: el('warmupDuration').value,
+            rpmMode: currentMode,
+            promptMode: currentPromptMode,
+            requestType: currentRequestType,
+            goal: currentGoal,
+            randomPrompts: getRandomPrompts(),
+            rampVariant: el('rampVariant').value,
+            incrementRPM: el('incrementRPM').value,
+            incrementInterval: el('incrementInterval').value,
+            rampDuration: el('rampDuration').value,
+            maxRPM: el('maxRPM').value,
+            concurrency: el('concurrency').value,
+            concurrencyDuration: el('concurrencyDuration').value,
+            concurrencyStart: el('concurrencyStart').value,
+            concurrencyMax: el('concurrencyMax').value,
+            concurrencyMultiplier: el('concurrencyMultiplier').value,
+            ladderStepDuration: el('ladderStepDuration').value,
+            seekRPM: el('seekRPM').value,
+            seekIncrementRPM: el('seekIncrementRPM').value,
+            seekStepDuration: el('seekStepDuration').value,
+            seekMaxRPM: el('seekMaxRPM').value,
+            reuseRatio: el('reuseRatio').value,
+            datasetId: el('datasetId').value,
+            slaSuccess: el('slaSuccess').value,
+            slaTtft: el('slaTtft').value,
+            slaTpot: el('slaTpot').value,
+            capacityRatio: el('capacityRatio').value,
+            successThreshold: numValue('successThreshold', 75),
+            maxFailures: numValue('maxFailures', 20),
+            latencyThreshold: numValue('latencyThreshold', 150000),
+            assertions: collectAssertions(),
+            webhookUrl: el('webhookUrl').value.trim(),
+            inputPrice: parseFloat(el('inputPrice').value) || 0,
+            outputPrice: parseFloat(el('outputPrice').value) || 0,
+        };
+        localStorage.setItem('llm_eval_config', JSON.stringify(config));
+    }
+
+    function loadSavedConfig() {
+        try {
+            const savedConfig = localStorage.getItem('llm_eval_config');
+            if (!savedConfig) return;
+            const config = JSON.parse(savedConfig);
+
+            if (config.providerType) selectProvider(config.providerType);
+            if (config.url) el('url').value = config.url;
+            if (config.modelName) el('modelName').value = config.modelName;
+            if (config.apiKey) el('apiKey').value = config.apiKey;
+            if (config.testPrompt) el('testPrompt').value = config.testPrompt;
+            if (config.promptTemplate !== undefined) el('promptTemplate').value = config.promptTemplate;
+            if (config.fixedRPM) el('fixedRPM').value = config.fixedRPM;
+            if (config.autoRPM) el('autoRPM').value = config.autoRPM;
+            if (config.testDuration) el('testDuration').value = config.testDuration;
+            if (config.warmupDuration !== undefined) el('warmupDuration').value = config.warmupDuration;
+            if (config.webhookUrl !== undefined) el('webhookUrl').value = config.webhookUrl;
+            if (config.inputPrice !== undefined) el('inputPrice').value = config.inputPrice || '';
+            if (config.outputPrice !== undefined) el('outputPrice').value = config.outputPrice || '';
+
+            if (config.requestType) selectRequestType(config.requestType);
+            if (config.rpmMode) selectMode(config.rpmMode);
+            if (config.promptMode) selectPromptMode(config.promptMode);
+
+            // 恢复测试目标（旧配置里没有 goal 字段时按模式反推）
+            const goalMap = { seek: 'rpm', 'concurrency-ramp': 'tpm', probe: 'probe' };
+            currentGoal = config.goal || goalMap[config.rpmMode] || 'custom';
+            document.querySelectorAll('#goalCards .opt-card').forEach((c) => {
+                c.classList.toggle('active', c.dataset.goal === currentGoal);
+            });
+            renderGoalHint();
+
+            const simpleFields = [
+                'rampVariant', 'incrementRPM', 'incrementInterval', 'rampDuration', 'maxRPM',
+                'concurrency', 'concurrencyDuration', 'concurrencyStart', 'concurrencyMax',
+                'concurrencyMultiplier', 'ladderStepDuration',
+                'seekRPM', 'seekIncrementRPM', 'seekStepDuration', 'seekMaxRPM',
+                'reuseRatio', 'slaSuccess', 'slaTtft', 'slaTpot', 'capacityRatio',
+            ];
+            simpleFields.forEach((id) => {
+                if (config[id] !== undefined && config[id] !== null && config[id] !== '') {
+                    el(id).value = config[id];
+                }
+            });
+            el('reuseRatioValue').textContent = `${el('reuseRatio').value}%`;
+
+            if (config.randomPrompts && config.randomPrompts.length > 0) {
+                const list = el('promptList');
+                list.innerHTML = '';
+                config.randomPrompts.forEach((prompt) => {
+                    const item = document.createElement('div');
+                    item.className = 'prompt-item';
+                    item.innerHTML = `
+                        <input type="text" class="input random-prompt" value="${esc(prompt)}">
+                        <button class="btn btn-danger btn-sm" type="button" onclick="removePromptField(this)">删除</button>`;
+                    list.appendChild(item);
+                });
+            }
+
+            if (config.successThreshold !== undefined) el('successThreshold').value = config.successThreshold;
+            if (config.maxFailures !== undefined) el('maxFailures').value = config.maxFailures;
+            if (config.latencyThreshold !== undefined) el('latencyThreshold').value = config.latencyThreshold;
+
+            if (Array.isArray(config.assertions) && config.assertions.length > 0) {
+                el('assertList').innerHTML = '';
+                config.assertions.forEach((a) => addAssertionRow(a));
+            }
+
+            updateCounter('testPrompt', 'charCount');
+            updateCounter('promptTemplate', 'tplCount');
+        } catch (e) {
+            console.error('加载本地配置失败:', e);
+        }
+    }
+
+    // ===================== 本地缓存清理（新一轮测试） =====================
+    function resetLiveBuffers() {
+        reqLogs = [];
+        logsHydrated = false;
+        throughputSeries = [];
+        renderReqLogsFull();
+        renderThroughputChart();
+    }
+
+    // ===================== WebSocket =====================
+    function setupWS() {
+        const ws = createWS();
+        ws.on('stateUpdate', applyState);
+        ws.on('statsUpdate', applyState);
+        ws.on('currentMinuteStatsUpdate', applyMinuteStats);
+        ws.on('requestLogsBatch', applyLogBatch);
+        ws.on('logsCleared', () => {
+            reqLogs = [];
+            logsHydrated = false;
+            renderReqLogsFull();
+        });
+        ws.on('warmupCompleted', (data) => {
+            toast.success('预热完成，进入正式压测');
+            if (lastState && lastState.warmup) {
+                lastState.warmup.active = false;
+                renderWarmup(lastState);
+            }
+            if (data && data.stats) {
+                console.log('预热期统计:', data.stats);
+            }
+        });
+        ws.on('testStopped', onTestStopped);
+        ws.on('probeCompleted', onProbeCompleted);
+        ws.on('ladderStepChanged', (d) => {
+            if (d && d.concurrency !== undefined) toast.info(`并发阶梯切档 → ${fmtInt(d.concurrency)} 路并发`);
+        });
+        ws.on('probeProgress', (d) => {
+            if (d && d.message) console.log('能力探测进度:', d.message);
+        });
+    }
+
+    // ===================== 状态渲染 =====================
+    function setStatus(isRun, text) {
+        el('statusDot').className = `dot ${isRun ? 'success pulse' : 'muted'}`;
+        el('statusText').textContent = text;
+    }
+
+    function renderOtherBanner(state) {
+        const banner = el('otherBanner');
+        if (!otherRunning) {
+            banner.classList.add('hidden');
+            el('runChips').innerHTML = '';
+            return;
+        }
+        banner.classList.remove('hidden');
+        const stats = state.stats || {};
+        el('otherInfo').textContent =
+            `${getModeText(state.mode)} · 已发出 ${fmtInt(stats.totalRequests || 0)} 个请求`;
+        el('forceStopBtn').style.display = isAdmin ? '' : 'none';
+    }
+
+    function renderRunChips(state) {
+        const c = state.config || {};
+        const chips = [`模型 ${c.modelName || '-'}`, `模式 ${getModeText(state.mode)}`];
+        if (c.promptMode === 'dataset') {
+            chips.push(`负载 ${c.datasetName || c.datasetId || '数据集'}`);
+        } else if (c.promptMode === 'template') {
+            chips.push('负载 模板请求');
+        } else {
+            chips.push(`负载 ${getPromptModeText(c.promptMode)}`);
+        }
+        if (state.targetRPM) chips.push(`目标 RPM ${fmtInt(state.targetRPM)}`);
+        if (state.ladder && state.ladder.active) chips.push(`当前并发 ${fmtInt(state.ladder.current)}`);
+        chips.push(`复用率 ${Math.round((c.promptReuseRatio || 0) * 100)}%`);
+        if (c.warmupDuration > 0) chips.push(`预热 ${fmtInt(c.warmupDuration)}s`);
+        el('runChips').innerHTML = chips
+            .map((t) => `<span class="badge muted">${esc(t)}</span>`)
+            .join('');
+    }
+
+    function updateActionButton() {
+        const btn = el('mainActionBtn');
+        if (otherRunning) {
+            btn.classList.add('hidden');
+            return;
+        }
+        btn.classList.remove('hidden');
+        if (btn.dataset.busy === '1') return; // 启动/停止流程中，文案由流程控制
+        if (running) {
+            btn.className = 'btn btn-danger btn-lg';
+            btn.textContent = '■ 停止压测';
+            btn.dataset.action = 'stop';
+            btn.disabled = false;
+        } else {
+            btn.className = 'btn btn-primary btn-lg';
+            btn.textContent = '▶ 启动压测';
+            btn.dataset.action = 'start';
+            btn.disabled = false;
+        }
+    }
+
+    function applyState(state) {
+        if (!state || typeof state !== 'object') return;
+        const stats = state.stats || {};
+
+        // 当前测试由其他用户启动：只做提示，不把别人的数据渲染进本页结果区
+        if (state.owner === 'other') {
+            otherRunning = !!state.isRunning;
+            lastState = null;
+            renderOtherBanner(state);
+            setStatus(otherRunning, otherRunning ? '其他用户压测中' : '准备就绪');
+            el('monitorCard').classList.remove('running');
+            el('liveRPM').textContent = 'RPM 0';
+            el('liveTPM').textContent = 'TPM 0';
+            stopTotalTimer();
+            running = false;
+            updateActionButton();
+            return;
+        }
+
+        otherRunning = false;
+        el('otherBanner').classList.add('hidden');
+        running = !!state.isRunning;
+        lastState = state;
+
+        setStatus(running, running
+            ? `压测进行中（${getModeText(state.mode)} / ${getPromptModeText(state.config && state.config.promptMode)}）`
+            : '准备就绪');
+        el('monitorCard').classList.toggle('running', running);
+
+        if (running && state.startTime && !totalTimerInterval) startTotalTimer(state.startTime);
+        if (!running) stopTotalTimer();
+        updateActionButton();
+
+        renderRunChips(state);
+        renderWarmup(state);
+        renderLadder(state);
+
+        // 头部实时读数
+        el('liveRPM').textContent = `RPM ${fmtInt(state.currentRPM || 0)}`;
+        const tpmWindow = stats.tpmWindow || {};
+        el('liveTPM').textContent = `TPM ${fmtInt(tpmWindow.total || 0)}`;
+
+        // ---- 核心指标（8 卡） ----
+        el('stRpm').textContent = fmtInt(state.currentRPM || stats.actualRPM || 0);
+        el('stTargetRpm').textContent = `目标 ${state.targetRPM ? fmtInt(state.targetRPM) : '-'}`;
+        const rate = stats.successRate === undefined || stats.successRate === null ? 100 : stats.successRate;
+        el('stSuccess').textContent = fmtPct(rate);
+        const succCard = el('stSuccess').closest('.stat-card');
+        succCard.className = 'stat-card ' + (rate >= 99 ? 'good' : rate >= 90 ? 'warn' : 'bad');
+        el('stSuccessCount').textContent = `成功 ${fmtInt(stats.successCount || 0)} / 失败 ${fmtInt(stats.failureCount || 0)}`;
+        const latency = stats.latency || {};
+        el('stP99').textContent = latency.p99 ? fmtMs(latency.p99) : '-';
+        el('stAvgLatency').textContent = `平均 ${latency.avg ? fmtMs(latency.avg) : '-'}`;
+        const ttfb = stats.ttfb || {};
+        el('stTtft').textContent = ttfb.p99 ? fmtMs(ttfb.p99) : '-';
+        el('stTtfbP95').textContent = `P95 ${ttfb.p95 ? fmtMs(ttfb.p95) : '-'}`;
+        el('stTpm').textContent = fmtInt(tpmWindow.total || 0);
+        el('stTpmSplit').textContent = `入 ${fmtInt(tpmWindow.input || 0)} / 出 ${fmtInt(tpmWindow.output || 0)}`;
+        el('stInFlight').textContent = fmtInt(stats.inFlight || 0);
+        el('stPeak').textContent = `峰值 ${fmtInt(stats.peakConcurrency || 0)}`;
+        el('stTokens').textContent = fmtTokens(stats.totalTokens || 0);
+        el('stAvgTpmFoot').textContent = `平均 TPM ${fmtInt(stats.avgTPM || 0)}`;
+        el('stAssert').textContent = fmtInt(stats.assertionFailures || 0);
+        el('stSkippedFoot').textContent = `跳过 ${fmtInt(stats.skippedRequests || 0)}`;
+
+        // ---- 详细指标 ----
+        el('stP50').textContent = latency.p50 ? fmtMs(latency.p50) : '-';
+        el('stP90').textContent = latency.p90 ? fmtMs(latency.p90) : '-';
+        el('stP95').textContent = latency.p95 ? fmtMs(latency.p95) : '-';
+        const failureLatency = stats.failureLatency || {};
+        el('stFailP95').textContent = failureLatency.p95 ? fmtMs(failureLatency.p95) : '-';
+        const tpot = stats.tpot || {};
+        el('stTpotP95').textContent = tpot.p95 ? fmtMs(tpot.p95) : '-';
+        el('stTpotP99').textContent = tpot.p99 ? fmtMs(tpot.p99) : '-';
+        el('stTotal').textContent = fmtInt(stats.totalRequests || 0);
+        el('stActualRpm').textContent = fmtInt(stats.actualRPM || 0);
+        el('stAvgConc').textContent = fmtInt(stats.avgConcurrency || 0);
+        el('stReuse').textContent = formatRatio(stats.actualPromptReuseRatio);
+        el('stSkipped').textContent = fmtInt(stats.skippedRequests || 0);
+        el('stAbandoned').textContent = fmtInt(stats.abandonedInFlight || 0);
+        el('stStageOut').textContent = fmtInt((stats.stageThroughput || {}).outputTPM || 0);
+        const sla = stats.sla || {};
+        const slaEl = el('stSla');
+        if (sla.met === undefined || sla.met === null) {
+            slaEl.textContent = '-';
+            slaEl.closest('.stat-card').className = 'stat-card good';
+        } else {
+            slaEl.textContent = sla.met ? '达标' : '不达标';
+            slaEl.closest('.stat-card').className = `stat-card ${sla.met ? 'good' : 'bad'}`;
+        }
+        el('stAvgTpm').textContent = fmtInt(stats.avgTPM || 0);
+        el('stInTpm').textContent = fmtInt(stats.inputTPM || 0);
+        el('stOutTpm').textContent = fmtInt(stats.outputTPM || 0);
+        el('stTokSpeed').textContent = fmtInt(stats.avgTokenSpeed || 0);
+
+        // 日志与错误
+        hydrateLogs(state);
+        renderErrorSummary(stats.errors || {});
+        renderErrorLogs(stats.errorLogs || []);
+
+        if (state.currentMinuteStats) applyMinuteStats(state.currentMinuteStats);
+
+        // 图表与分钟表（节流至 1 秒）
+        if (running) pushSample(state);
+        const now = Date.now();
+        if (now - lastChartRender > 1000) {
+            lastChartRender = now;
+            renderThroughputChart();
+            const minuteStats = stats.minuteStats || [];
+            renderMinuteChart(minuteStats);
+            renderMinuteTable(minuteStats);
+        }
+
+        renderConclusion(state);
+    }
+
+    // ===================== 预热 / 阶梯 =====================
+    function renderWarmup(state) {
+        const w = state.warmup;
+        const bar = el('warmupBar');
+        if (!w || !w.active) { bar.classList.add('hidden'); return; }
+        bar.classList.remove('hidden');
+        updateWarmupTick();
+    }
+
+    function updateWarmupTick() {
+        const w = lastState && lastState.warmup;
+        if (!w || !w.active) return;
+        const remain = Math.max(0, (w.endsAt || 0) - Date.now());
+        el('warmupLeft').textContent = fmtDuration(remain);
+        const pct = w.totalMs ? Math.min(100, Math.max(0, 100 * (1 - remain / w.totalMs))) : 0;
+        el('warmupFill').style.width = pct + '%';
+        const s = w.stats || {};
+        el('warmupCounts').textContent =
+            `预热请求 ${fmtInt(s.requests || 0)} · 成功 ${fmtInt(s.success || 0)} · 失败 ${fmtInt(s.failure || 0)}`;
+    }
+
+    function renderLadder(state) {
+        const l = state.ladder;
+        const bar = el('ladderBar');
+        if (!l || !l.active || !(l.steps && l.steps.length)) {
+            bar.classList.add('hidden');
+            return;
+        }
+        bar.classList.remove('hidden');
+        el('ladderText').textContent =
+            `第 ${Math.min(l.index + 1, l.steps.length)} / ${l.steps.length} 档 · 当前并发 ${fmtInt(l.current)}`;
+        el('ladderFill').style.width = `${Math.round(100 * (l.index + 1) / l.steps.length)}%`;
+    }
+
+    // ===================== 本分钟统计 =====================
+    function applyMinuteStats(m) {
+        if (!m) return;
+        el('mTotal').textContent = fmtInt(m.totalRequests || 0);
+        el('mTokens').textContent = fmtInt(m.tokens || 0);
+        el('mSuccess').textContent = fmtPct(m.successRate === undefined ? 100 : m.successRate);
+        el('mFail').textContent = `失败率 ${fmtPct(m.failureRate === undefined ? 0 : m.failureRate)}`;
+    }
+
+    // ===================== 请求日志 =====================
+    function logRowHtml(log) {
+        const badge = log.status === 'success'
+            ? '<span class="badge success">成功</span>'
+            : '<span class="badge danger">失败</span>';
+        const tokens = log.tokens && log.tokens.totalTokens ? fmtInt(log.tokens.totalTokens) : '-';
+        const err = log.error
+            ? `<span class="text-danger" style="word-break:break-word;font-size:var(--fs-xs)">${esc(log.error)}</span>`
+            : '-';
+        return `<tr>
+            <td class="mono">${fmtTime(log.time)}</td>
+            <td>${badge}</td>
+            <td>${log.requestType === 'non-stream' ? '非流式' : '流式'}</td>
+            <td class="num">${log.statusCode || '-'}</td>
+            <td class="num">${log.responseTime !== undefined && log.responseTime !== null ? fmtMs(log.responseTime) : '-'}</td>
+            <td class="num">${log.ttfb !== undefined && log.ttfb !== null ? fmtMs(log.ttfb) : '-'}</td>
+            <td class="num">${tokens}</td>
+            <td>${esc(log.modelName || '-')}</td>
+            <td>${err}</td>
+        </tr>`;
+    }
+
+    function renderReqLogsFull() {
+        const body = el('reqLogBody');
+        const empty = el('reqLogEmpty');
+        el('reqlogCount').textContent = fmtInt(reqLogs.length);
+        if (reqLogs.length === 0) {
+            body.innerHTML = '';
+            empty.classList.remove('hidden');
+            return;
+        }
+        empty.classList.add('hidden');
+        body.innerHTML = reqLogs.map(logRowHtml).join('');
+    }
+
+    function hydrateLogs(state) {
+        if (reqLogs.length > 0 || logsHydrated) return;
+        const serverLogs = state.stats && state.stats.requestLogs;
+        if (Array.isArray(serverLogs) && serverLogs.length > 0) {
+            reqLogs = serverLogs.slice(0, 200);
+            logsHydrated = true;
+            renderReqLogsFull();
+        }
+    }
+
+    function applyLogBatch(batch) {
+        if (!Array.isArray(batch) || batch.length === 0) return;
+        logsHydrated = true;
+        el('reqLogEmpty').classList.add('hidden');
+        const body = el('reqLogBody');
+        // batch 按时间正序到达；展示为最新在前，逐条倒序插入
+        const frag = document.createDocumentFragment();
+        const tmp = document.createElement('tbody');
+        for (let i = batch.length - 1; i >= 0; i--) {
+            reqLogs.unshift(batch[i]);
+            tmp.innerHTML = logRowHtml(batch[i]);
+            if (tmp.firstElementChild) frag.appendChild(tmp.firstElementChild);
+        }
+        if (reqLogs.length > 200) reqLogs.length = 200;
+        body.insertBefore(frag, body.firstChild);
+        while (body.children.length > 200) body.removeChild(body.lastChild);
+        el('reqlogCount').textContent = fmtInt(reqLogs.length);
+    }
+
+    // ===================== 错误统计 / 日志 =====================
+    function renderErrorSummary(errors) {
+        const container = el('errSummary');
+        const entries = Object.entries(errors);
+        const total = entries.reduce((s, [, c]) => s + c, 0);
+        const badge = el('errsumCount');
+        if (total > 0) {
+            badge.textContent = fmtInt(total);
+            badge.classList.remove('hidden');
+        } else {
+            badge.classList.add('hidden');
+        }
+        if (entries.length === 0) {
+            container.innerHTML = '暂无错误';
+            container.className = 'empty-state';
+            return;
+        }
+        container.className = '';
+        const sorted = entries.sort((a, b) => b[1] - a[1]).slice(0, 10);
+        container.innerHTML = sorted.map(([message, count]) => `
+            <div class="flex items-center justify-between gap-3 mb-2" style="
+                background:var(--surface-2);border:1px solid var(--border);
+                border-left:3px solid var(--danger);border-radius:var(--r-sm);padding:10px 14px;">
+                <div class="flex-1" style="word-break:break-word;font-size:var(--fs-sm)">${esc(message)}</div>
+                <span class="badge danger">${fmtInt(count)}</span>
+            </div>`).join('');
+    }
+
+    function renderErrorLogs(logs) {
+        const container = el('errLogs');
+        if (!Array.isArray(logs) || logs.length === 0) {
+            container.innerHTML = '暂无错误日志';
+            container.className = 'empty-state';
+            return;
+        }
+        container.className = '';
+        container.innerHTML = logs.slice(0, 20).map((log) => `
+            <div class="mb-2" style="
+                background:rgba(248,113,113,0.06);border-left:3px solid var(--danger);
+                border-radius:var(--r-sm);padding:10px 14px;font-size:var(--fs-sm);word-break:break-word;">
+                <span class="muted mono" style="font-size:var(--fs-xs);margin-right:8px">${fmtTime(log.time)}</span>
+                ${log.statusCode ? `<b class="text-danger">[${esc(String(log.statusCode))}]</b> ` : ''}
+                ${esc(log.message || '')}
+            </div>`).join('');
+    }
+
+    // ===================== 分钟统计表 =====================
+    function renderMinuteTable(minuteStats) {
+        const body = el('minStatBody');
+        const empty = el('minStatEmpty');
+        const list = (minuteStats || []).slice(-30).reverse();
+        if (list.length === 0) {
+            body.innerHTML = '';
+            empty.classList.remove('hidden');
+            return;
+        }
+        empty.classList.add('hidden');
+        body.innerHTML = list.map((m) => {
+            const d = new Date(m.timestamp);
+            const time = isNaN(d.getTime()) ? '-' : `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+            return `<tr>
+                <td class="mono">${time}</td>
+                <td class="num">${fmtInt((m.successCount || 0) + (m.failureCount || 0))}</td>
+                <td class="num text-success">${fmtInt(m.successCount || 0)}</td>
+                <td class="num text-danger">${fmtInt(m.failureCount || 0)}</td>
+                <td class="num">${fmtInt(m.rpm || 0)}</td>
+                <td class="num">${fmtInt(m.tpm !== undefined ? m.tpm : (m.tokens || 0))}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // ===================== 图表（自绘 SVG） =====================
+    function niceMax(v) {
+        if (!v || v <= 0) return 100;
+        const p = Math.pow(10, Math.floor(Math.log10(v)));
+        const u = v / p;
+        const m = u <= 1 ? 1 : u <= 2 ? 2 : u <= 5 ? 5 : 10;
+        return m * p;
+    }
+
+    function pushSample(state) {
+        const now = Date.now();
+        const last = throughputSeries[throughputSeries.length - 1];
+        if (last && now - last.t < 2000) return;
+        const stats = state.stats || {};
+        throughputSeries.push({
+            t: now,
+            rpm: state.currentRPM || stats.actualRPM || 0,
+            tpm: (stats.tpmWindow || {}).total || 0,
+        });
+        if (throughputSeries.length > MAX_POINTS) throughputSeries.shift();
+    }
+
+    function renderThroughputChart() {
+        const svg = el('tpChart');
+        const ph = el('chartPlaceholder');
+        const pts = throughputSeries;
+        if (pts.length < 2) {
+            svg.innerHTML = '';
+            svg.classList.add('hidden');
+            ph.classList.remove('hidden');
+            return;
+        }
+        svg.classList.remove('hidden');
+        ph.classList.add('hidden');
+
+        const W = 1000, H = 300, L = 66, R = 66, T = 18, B = 34;
+        const pw = W - L - R, phh = H - T - B, n = pts.length;
+        let rpmMax = 0, tpmMax = 0;
+        pts.forEach((p) => { rpmMax = Math.max(rpmMax, p.rpm || 0); tpmMax = Math.max(tpmMax, p.tpm || 0); });
+        rpmMax = niceMax(rpmMax);
+        tpmMax = niceMax(tpmMax);
+        const x = (i) => L + pw * (i / (n - 1));
+        const yr = (v) => T + phh * (1 - (rpmMax ? v / rpmMax : 0));
+        const yt = (v) => T + phh * (1 - (tpmMax ? v / tpmMax : 0));
+
+        let g = '';
+        for (let k = 0; k <= 4; k++) {
+            const yy = T + phh * k / 4;
+            g += `<line x1="${L}" y1="${yy}" x2="${W - R}" y2="${yy}" stroke="rgba(148,163,184,0.10)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+            g += `<text x="${L - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="#5b6b85">${fmtInt(Math.round(rpmMax * (1 - k / 4)))}</text>`;
+            g += `<text x="${W - R + 8}" y="${yy + 4}" text-anchor="start" font-size="11" fill="#8b7fd6">${fmtTokens(Math.round(tpmMax * (1 - k / 4)))}</text>`;
+        }
+        const t0 = pts[0].t, t1 = pts[n - 1].t;
+        [0, 0.5, 1].forEach((f) => {
+            const d = new Date(t0 + (t1 - t0) * f);
+            const lbl = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+            const xx = x(f * (n - 1));
+            g += `<text x="${xx.toFixed(1)}" y="${H - 10}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-size="11" fill="#5b6b85">${lbl}</text>`;
+        });
+        const rpmPts = pts.map((p, i) => `${x(i).toFixed(1)},${yr(p.rpm || 0).toFixed(1)}`).join(' ');
+        const tpmPts = pts.map((p, i) => `${x(i).toFixed(1)},${yt(p.tpm || 0).toFixed(1)}`).join(' ');
+        svg.innerHTML = g
+            + `<polyline points="${tpmPts}" fill="none" stroke="#a78bfa" stroke-width="2" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>`
+            + `<polyline points="${rpmPts}" fill="none" stroke="#22d3ee" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+    }
+
+    function renderMinuteChart(minuteStats) {
+        const svg = el('minChart');
+        const phEl = el('minChartPh');
+        const data = (minuteStats || []).slice(-60);
+        if (data.length === 0) {
+            svg.innerHTML = '';
+            svg.classList.add('hidden');
+            phEl.classList.remove('hidden');
+            return;
+        }
+        svg.classList.remove('hidden');
+        phEl.classList.add('hidden');
+
+        const W = 1000, H = 190, L = 56, R = 16, T = 12, B = 28;
+        const pw = W - L - R, pbh = H - T - B;
+        let max = 0;
+        data.forEach((d) => { max = Math.max(max, (d.successCount || 0) + (d.failureCount || 0)); });
+        max = niceMax(max);
+        const step = pw / data.length;
+        const bw = Math.max(2, Math.min(26, step * 0.62));
+
+        let g = '';
+        for (let k = 0; k <= 4; k++) {
+            const yy = T + pbh * k / 4;
+            g += `<line x1="${L}" y1="${yy}" x2="${W - R}" y2="${yy}" stroke="rgba(148,163,184,0.10)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+            g += `<text x="${L - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="#5b6b85">${fmtInt(Math.round(max * (1 - k / 4)))}</text>`;
+        }
+        data.forEach((d, i) => {
+            const cx = L + step * i + step / 2;
+            const s = d.successCount || 0, f = d.failureCount || 0;
+            const hs = pbh * (s / max), hf = pbh * (f / max);
+            const x0 = (cx - bw / 2).toFixed(1), wAttr = bw.toFixed(1);
+            if (f > 0) {
+                g += `<rect x="${x0}" y="${(T + pbh - hf).toFixed(1)}" width="${wAttr}" height="${Math.max(hf, 1).toFixed(1)}" fill="rgba(248,113,113,0.75)" rx="1"/>`;
+            }
+            if (s > 0) {
+                g += `<rect x="${x0}" y="${(T + pbh - hf - hs).toFixed(1)}" width="${wAttr}" height="${Math.max(hs, 1).toFixed(1)}" fill="rgba(52,211,153,0.75)" rx="1"/>`;
+            }
+        });
+        const skip = Math.max(1, Math.ceil(data.length / 8));
+        data.forEach((d, i) => {
+            if (i % skip !== 0) return;
+            const cx = L + step * i + step / 2;
+            const dte = new Date(d.timestamp);
+            if (isNaN(dte.getTime())) return;
+            g += `<text x="${cx.toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#5b6b85">${p2(dte.getHours())}:${p2(dte.getMinutes())}</text>`;
+        });
+        svg.innerHTML = g;
+    }
+
+    // ===================== 结果评估 =====================
+    function renderConclusion(state) {
+        const card = el('resultCard');
+        if (!state) { card.classList.add('hidden'); return; }
+        const vals = [state.maxSustainableRPM, state.maxSustainableTPM, state.recommendedRPM, state.recommendedTPM];
+        const has = vals.some((v) => v !== null && v !== undefined);
+        if (!has) { card.classList.add('hidden'); return; }
+        card.classList.remove('hidden');
+
+        const fmt = (v) => (v === null || v === undefined ? '-' : fmtInt(v));
+        el('rMaxRpm').textContent = fmt(state.maxSustainableRPM);
+        el('rMaxTpm').textContent = fmt(state.maxSustainableTPM);
+        el('rRecRpm').textContent = fmt(state.recommendedRPM);
+        el('rRecTpm').textContent = fmt(state.recommendedTPM);
+
+        // 配置了单价时展示本轮预估成本
+        const cost = state.stats && state.stats.estimatedCost;
+        if (cost !== null && cost !== undefined) {
+            el('rCostCard').classList.remove('hidden');
+            el('rCost').textContent = String(cost);
+        }
+
+        const probe = state.probeResult;
+        const thr = (probe && probe.sla) || (state.thresholds && state.thresholds.sla) || {};
+        const parts = [];
+        if (thr.successThreshold !== undefined) parts.push(`成功率 ≥ ${thr.successThreshold}%`);
+        if (thr.ttftP99Threshold) parts.push(`TTFT P99 ≤ ${fmtInt(thr.ttftP99Threshold)}ms`);
+        if (thr.tpotP99Threshold) parts.push(`TPOT P99 ≤ ${fmtInt(thr.tpotP99Threshold)}ms/token`);
+        if (thr.capacityRatio) parts.push(`建议容量按 ${Math.round(thr.capacityRatio * 100)}% 折算`);
+        const note = probe && probe.reason ? `（${esc(probe.reason)}）` : '';
+        el('resultSla').innerHTML = `<b>判定标准${note}：</b>${parts.join('，') || '-'}`;
+
+        const sla = state.stats && state.stats.sla;
+        const badge = el('slaBadge');
+        if (sla && typeof sla.met === 'boolean') {
+            badge.textContent = sla.met ? '当前档位 SLA 达标' : '当前档位 SLA 未达标';
+            badge.className = `badge ${sla.met ? 'success' : 'danger'}`;
+            if (!sla.met && Array.isArray(sla.reasons) && sla.reasons.length) {
+                badge.title = sla.reasons.map((r) => r && r.message ? r.message : String(r)).filter(Boolean).join('；');
+            } else {
+                badge.removeAttribute('title');
+            }
+        } else {
+            badge.textContent = '-';
+            badge.className = 'badge muted';
+            badge.removeAttribute('title');
+        }
+
+        const probeNote = el('probeNote');
+        if (probe && probe.reason) {
+            probeNote.classList.remove('hidden');
+            probeNote.innerHTML = `<b>能力探测：</b>${esc(probe.reason)}`;
+        } else {
+            probeNote.classList.add('hidden');
+        }
+    }
+
+    // ===================== 测试结束 / 探测完成 =====================
+    function onTestStopped(data) {
+        data = data || {};
+        // 立即把界面切回最新状态，不等后续消息
+        refreshStatus();
+        // 能力探测的每轮结束不弹窗，等 probeCompleted 一并给出结论
+        if (lastState && lastState.mode === 'probe') {
+            console.log('探测轮次结束:', data.reason, data.finalStats);
+            return;
+        }
+        const fs = data.finalStats || {};
+        const rows = [];
+        const row = (k, v) => `<div class="flex justify-between gap-3" style="padding:7px 0;border-bottom:1px solid var(--border)">
+            <span class="muted">${k}</span><b>${v}</b></div>`;
+        rows.push(row('停止原因', esc(data.reason || '手动停止')));
+        rows.push(row('总请求数', fmtInt(fs.totalRequests || 0)));
+        rows.push(row('成功率', `${fs.successRate === undefined ? '-' : fs.successRate}%`));
+        rows.push(row('失败率', `${fs.failureRate === undefined ? '-' : fs.failureRate}%`));
+        if (data.maxSustainableRPM !== null && data.maxSustainableRPM !== undefined) rows.push(row('最大可持续 RPM', fmtInt(data.maxSustainableRPM)));
+        if (data.maxSustainableTPM !== null && data.maxSustainableTPM !== undefined) rows.push(row('最大可持续 TPM', fmtInt(data.maxSustainableTPM)));
+        if (data.recommendedRPM) rows.push(row('建议承载 RPM', fmtInt(data.recommendedRPM)));
+        if (data.recommendedTPM) rows.push(row('建议承载 TPM', fmtInt(data.recommendedTPM)));
+        if (fs.estimatedCost !== null && fs.estimatedCost !== undefined) rows.push(row('预估成本', String(fs.estimatedCost)));
+
+        const foot = document.createElement('div');
+        foot.style.cssText = 'display:flex;justify-content:flex-end;';
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'btn btn-primary';
+        closeBtn.textContent = '知道了';
+        foot.appendChild(closeBtn);
+
+        const m = Layout.modal({ title: '压测已结束', body: `<div>${rows.join('')}</div>`, footer: foot });
+        closeBtn.addEventListener('click', () => m.close());
+    }
+
+    function onProbeCompleted(r) {
+        if (!r) return;
+        const view = Object.assign({}, lastState || {});
+        view.probeResult = r;
+        view.maxSustainableRPM = r.maxRPM;
+        view.maxSustainableTPM = r.maxTPM;
+        view.recommendedRPM = r.recommendedRPM;
+        view.recommendedTPM = r.recommendedTPM;
+        if (!view.stats) view.stats = {};
+        lastState = view;
+        renderConclusion(view);
+        toast.success(
+            `能力探测完成（${r.reason || '已完成'}）：最大 RPM ${r.maxRPM ?? '-'} · 最大 TPM ${r.maxTPM ?? '-'} · 建议承载 ${r.recommendedRPM ?? '-'} RPM / ${r.recommendedTPM ?? '-'} TPM`,
+            9000
+        );
+    }
+
+    // ===================== 运行计时 =====================
+    function startTotalTimer(startTime) {
+        testStartTime = startTime;
+        if (totalTimerInterval) clearInterval(totalTimerInterval);
+        totalTimerInterval = setInterval(() => {
+            if (testStartTime) el('totalTimer').textContent = fmtClock(Date.now() - testStartTime);
+            updateWarmupTick();
+        }, 1000);
+    }
+
+    function stopTotalTimer() {
+        if (totalTimerInterval) {
+            clearInterval(totalTimerInterval);
+            totalTimerInterval = null;
+        }
+        testStartTime = null;
+        el('totalTimer').textContent = '00:00:00';
+    }
+
+    // ===================== 状态拉取 =====================
+    async function refreshStatus() {
+        try {
+            const st = await API.get('/api/status');
+            applyState(st);
+            return true;
+        } catch (e) {
+            console.warn('刷新测试状态失败:', e.message);
+            return false;
+        }
+    }
+
+    // ===================== 启动 / 停止 =====================
+    async function startTest() {
+        if (otherRunning) { toast.error('其他用户正在压测，无法启动'); return; }
+
+        const config = collectTestConfig();
+
+        if (!config.url || !config.modelName || !config.apiKey) {
+            toast.error('请填写 Base URL、模型名称和 API Key');
+            return;
+        }
+        // 预设填充的脱敏 Key 不能直接用于压测
+        if (config.apiKey.includes('****')) {
+            toast.warning('API Key 为脱敏串（来自预设），请重新输入完整 Key 后再启动');
+            el('apiKey').focus();
+            return;
+        }
+        if (currentPromptMode === 'fixed' && !config.testPrompt) {
+            toast.error('请填写测试请求');
+            return;
+        }
+        if (currentPromptMode === 'template' && !config.promptTemplate.trim()) {
+            toast.error('请填写请求模板（可用变量：{{seq}} {{uuid}} {{timestamp}} {{date}} {{random}} {{random:N}}）');
+            return;
+        }
+        if (currentPromptMode === 'random' && (!config.randomPrompts || config.randomPrompts.length === 0)) {
+            toast.error('请至少添加一条测试请求');
+            return;
+        }
+        // 能力探测会自行切换数据集，不强制要求选择
+        if (currentPromptMode === 'dataset' && currentMode !== 'probe' && !config.datasetId && !config.datasetItems) {
+            toast.error('请选择内置数据集，或先解析导入自定义数据集');
+            return;
+        }
+        if (currentMode === 'concurrency' && !(config.concurrency >= 1)) {
+            toast.error('请填写大于 0 的并发路数');
+            return;
+        }
+        if (currentMode === 'probe') {
+            const ok = await Layout.confirmDialog(
+                '一键能力探测会串行跑两轮（先 RPM 上限、再 TPM 上限），耗时较长。确认开始探测？',
+                { okText: '开始探测' }
+            );
+            if (!ok) return;
+        }
+        if (currentMode !== 'fixed' && !validateThresholdConfig()) {
+            toast.error('请检查阈值配置');
+            return;
+        }
+
+        saveConfig();
+
+        const btn = el('mainActionBtn');
+        if (btn.dataset.busy === '1') return; // 已在启动流程中，避免连发
+        btn.dataset.busy = '1';
+        btn.disabled = true;
+        btn.textContent = '启动中…';
+
+        try {
+            const res = await API.request('/api/start', { method: 'POST', body: config, raw: true });
+            let json = null;
+            try { json = await res.json(); } catch (e) { json = null; }
+            if (!res.ok || !json || json.success === false) {
+                toast.error('启动失败：' + ((json && (json.error || json.message)) || `HTTP ${res.status}`));
+                return;
+            }
+            toast.success('压测已启动');
+            resetLiveBuffers();
+            // 启动成功后立即拉一次初始状态
+            await refreshStatus();
+        } catch (e) {
+            toast.error('网络错误：' + e.message);
+        } finally {
+            btn.dataset.busy = '0';
+            updateActionButton();
+        }
+    }
+
+    // ===================== 连通性预检 =====================
+    async function runPreflight() {
+        const btn = el('preflightBtn');
+        const config = collectTestConfig();
+        if (!config.url || !config.modelName || !config.apiKey) {
+            toast.error('请先填写 Base URL、模型名称和 API Key');
+            return;
+        }
+        if (config.apiKey.includes('****')) {
+            toast.warning('API Key 为脱敏串（来自预设），请重新输入完整 Key 后再测试');
+            el('apiKey').focus();
+            return;
+        }
+
+        // 模板模式的变量在预检里替换为固定值，保证请求可直接发送
+        let prompt = '你好，请只回复：OK';
+        if (currentPromptMode === 'fixed' && config.testPrompt) {
+            prompt = config.testPrompt;
+        } else if (currentPromptMode === 'template' && config.promptTemplate) {
+            prompt = config.promptTemplate.replace(/\{\{seq\}\}/g, '1').replace(/\{\{[^}]*\}\}/g, '示例');
+        }
+
+        saveConfig();
+        btn.disabled = true;
+        const oldText = btn.textContent;
+        btn.textContent = '预检中…';
+        try {
+            const data = await API.post('/api/preflight', {
+                url: config.url,
+                modelName: config.modelName,
+                apiKey: config.apiKey,
+                providerType: config.providerType,
+                requestType: config.requestType,
+                testPrompt: prompt,
+            });
+            const row = (k, v) => `<div class="flex justify-between gap-3" style="padding:7px 0;border-bottom:1px solid var(--border)">
+                <span class="muted">${k}</span><b>${v}</b></div>`;
+            const rows = [];
+            rows.push(row('结果', data.ok
+                ? '<span style="color:var(--success)">可用</span>'
+                : `<span style="color:var(--danger)">失败</span>`));
+            rows.push(row('HTTP 状态', data.status ?? '-'));
+            rows.push(row('总耗时', data.latency != null ? `${data.latency} ms` : '-'));
+            if (data.ttfb != null) rows.push(row('首字节 TTFB', `${data.ttfb} ms`));
+            if (data.tokens) {
+                rows.push(row('Token（入/出）', `${data.tokens.promptTokens ?? '-'} / ${data.tokens.completionTokens ?? '-'}`));
+            }
+            if (data.contentPreview) rows.push(row('内容预览', esc(data.contentPreview)));
+            if (!data.ok && data.error) rows.push(row('错误信息', esc(data.error)));
+
+            const foot = document.createElement('div');
+            foot.style.cssText = 'display:flex;justify-content:flex-end;';
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'btn btn-primary';
+            closeBtn.textContent = '知道了';
+            foot.appendChild(closeBtn);
+            const m = Layout.modal({
+                title: data.ok ? '连通测试通过' : '连通测试失败',
+                body: `<div>${rows.join('')}</div>`,
+                footer: foot,
+            });
+            closeBtn.addEventListener('click', () => m.close());
+            if (data.ok) toast.success(`目标可用 · ${data.latency}ms`);
+            else toast.error('预检失败：' + (data.error || 'HTTP ' + (data.status || '?')));
+        } catch (e) {
+            toast.error('网络错误：' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = oldText;
+        }
+    }
+
+    async function stopTest(force = false) {
+        const btn = el('mainActionBtn');
+        if (btn.dataset.busy === '1') return; // 已在停止流程中
+        btn.dataset.busy = '1';
+        btn.disabled = true;
+        btn.textContent = '正在停止…';
+
+        // 兜底：服务端已停但 WebSocket 消息丢失时，15 秒后主动拉一次状态
+        const fallbackTimer = setTimeout(() => refreshStatus(), 15000);
+        try {
+            const res = await API.request('/api/stop', {
+                method: 'POST',
+                body: force ? { force: true } : {},
+                raw: true,
+            });
+            let data = null;
+            try { data = await res.json(); } catch (e) { data = null; }
+
+            // 测试归属其他用户：先确认再强制停止（仅管理员）
+            if (data && data.ownerMismatch) {
+                if (!isAdmin) {
+                    toast.error('当前测试由其他用户启动，仅管理员可以强制停止');
+                    return;
+                }
+                const ok = await Layout.confirmDialog('当前测试由其他用户启动，确认要强制停止吗？', { danger: true, okText: '强制停止' });
+                if (ok) await stopTest(true);
+                return;
+            }
+
+            if (!res.ok || (data && data.success === false)) {
+                toast.error('停止失败：' + ((data && (data.error || data.message)) || `HTTP ${res.status}`));
+            } else {
+                toast.success('已发送停止指令');
+            }
+        } catch (e) {
+            toast.error('网络错误：' + e.message);
+        } finally {
+            clearTimeout(fallbackTimer);
+            btn.dataset.busy = '0';
+            updateActionButton();
+            await refreshStatus();
+        }
+    }
+
+    // ===================== 清除日志 =====================
+    async function clearLogs() {
+        const ok = await Layout.confirmDialog('确定要清除所有请求日志吗？', { danger: true, okText: '清除' });
+        if (!ok) return;
+        try {
+            await API.post('/api/clearLogs');
+            reqLogs = [];
+            logsHydrated = false;
+            renderReqLogsFull();
+            toast.success('请求日志已清除');
+        } catch (e) {
+            toast.error('清除日志失败：' + e.message);
+        }
+    }
+
+    // ===================== Tabs =====================
+    function initTabs() {
+        el('logTabs').querySelectorAll('.tab').forEach((tab) => {
+            tab.addEventListener('click', () => {
+                el('logTabs').querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+                tab.classList.add('active');
+                ['reqlog', 'errsum', 'errlog', 'minstat'].forEach((name) => {
+                    show(`pane-${name}`, name === tab.dataset.tab);
+                });
+            });
+        });
+    }
+
+    // ===================== 事件绑定 =====================
+    function initUI() {
+        // 接口协议卡片
+        document.querySelectorAll('#providerCards .opt-card').forEach((card) => {
+            card.addEventListener('click', () => selectProvider(card.dataset.provider));
+        });
+        // 请求方式
+        document.querySelectorAll('#requestTypeSeg .seg-item').forEach((b) => {
+            b.addEventListener('click', () => selectRequestType(b.dataset.type));
+        });
+        // 测试目标
+        document.querySelectorAll('#goalCards .opt-card').forEach((card) => {
+            card.addEventListener('click', () => selectGoal(card.dataset.goal));
+        });
+        // 加压模式
+        document.querySelectorAll('#modeCards .opt-card').forEach((card) => {
+            card.addEventListener('click', () => selectMode(card.dataset.mode));
+        });
+        // 请求模式
+        document.querySelectorAll('#promptModeCards .opt-card').forEach((card) => {
+            card.addEventListener('click', () => selectPromptMode(card.dataset.mode));
+        });
+        // 复用率滑杆
+        el('reuseRatio').addEventListener('input', () => {
+            el('reuseRatioValue').textContent = `${el('reuseRatio').value}%`;
+        });
+        // 数据集
+        el('datasetId').addEventListener('change', updateDatasetHint);
+        el('parseImportBtn').addEventListener('click', parseDatasetImport);
+        // 模板变量
+        document.querySelectorAll('#templateVarChips .var-chip').forEach((chip) => {
+            chip.addEventListener('click', () => insertVar(chip.dataset.var));
+        });
+        // 断言
+        el('addAssertionBtn').addEventListener('click', () => addAssertionRow());
+        // 字数统计
+        bindCounter('testPrompt', 'charCount', 200000);
+        bindCounter('promptTemplate', 'tplCount', 0);
+        // 预设
+        el('presetSelect').addEventListener('change', (e) => applyPreset(e.target.value));
+        el('presetSaveBtn').addEventListener('click', saveAsPreset);
+        el('presetDelBtn').addEventListener('click', deletePreset);
+        // 主按钮
+        el('mainActionBtn').addEventListener('click', () => {
+            const action = el('mainActionBtn').dataset.action;
+            if (action === 'stop') stopTest(false);
+            else startTest();
+        });
+        // 强制停止（横幅）
+        el('forceStopBtn').addEventListener('click', async () => {
+            const ok = await Layout.confirmDialog('当前测试由其他用户启动，确认要强制停止吗？', { danger: true, okText: '强制停止' });
+            if (!ok) return;
+            try {
+                const res = await API.request('/api/stop', { method: 'POST', body: { force: true }, raw: true });
+                const data = await res.json().catch(() => null);
+                if (!res.ok || (data && data.success === false)) {
+                    toast.error('强制停止失败：' + ((data && (data.error || data.message)) || `HTTP ${res.status}`));
+                } else {
+                    toast.success('已发送强制停止指令');
+                }
+            } catch (e) {
+                toast.error('网络错误：' + e.message);
+            }
+            await refreshStatus();
+        });
+        // 清除日志
+        el('clearLogsBtn').addEventListener('click', clearLogs);
+        // 连通性预检
+        el('preflightBtn').addEventListener('click', runPreflight);
+        // 横幅图标
+        el('otherIcon').innerHTML = Layout.icons.alert;
+        // Tabs
+        initTabs();
+    }
+
+    // ===================== 入口 =====================
+    Layout.init({ active: 'dashboard', title: '压测控制台', sub: 'LLM API 压力测试' }).then((u) => {
+        user = u;
+        isAdmin = user && user.role === 'admin';
+
+        initUI();
+        // 默认走「一键能力探测」
+        selectGoal('probe');
+        loadSavedConfig();
+        // 断言编辑器默认给一行
+        if (el('assertList').children.length === 0) addAssertionRow();
+        loadDatasets();
+        loadPresets();
+        setupWS();
+        refreshStatus();
+    }).catch((e) => {
+        console.error('页面初始化失败:', e);
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>历史报告 · LLM-API-Eval</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <style>
+        input[type="date"] { color-scheme: dark; }
+        .cell-title { font-weight: 600; }
+        .cell-sub {
+            font-size: var(--fs-xs);
+            color: var(--text-3);
+            max-width: 260px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .rate { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+        /* A/B 对比弹窗 */
+        .compare-pick { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: end; }
+        @media (max-width: 640px) { .compare-pick { grid-template-columns: 1fr; } }
+        .cmp-vs { font-weight: 700; color: var(--text-3); padding-bottom: 10px; }
+        .cmp-brief { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 2px; }
+        .cmp-brief + .cmp-brief { border-top: 1px dashed var(--border); }
+        .cmp-win { color: var(--success, #34d399); font-weight: 700; }
+    </style>
+</head>
+<body data-page="history">
+    <div id="page-content">
+        <!-- 统计概览（随当前列表数据汇总） -->
+        <div class="stat-grid mb-4">
+            <div class="stat-card accent">
+                <div class="stat-label">当前记录数</div>
+                <div class="stat-value" id="s-count">0</div>
+                <div class="stat-foot">本页汇总</div>
+            </div>
+            <div class="stat-card accent">
+                <div class="stat-label">总请求数</div>
+                <div class="stat-value" id="s-req">0</div>
+                <div class="stat-foot">本页汇总</div>
+            </div>
+            <div class="stat-card good">
+                <div class="stat-label">平均成功率</div>
+                <div class="stat-value" id="s-rate">0%</div>
+                <div class="stat-foot">本页汇总</div>
+            </div>
+            <div class="stat-card warn">
+                <div class="stat-label">平均 P95 延迟</div>
+                <div class="stat-value" id="s-p95">-</div>
+                <div class="stat-foot">本页汇总</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-head-row mb-3">
+                <div>
+                    <div class="card-title">测试记录</div>
+                    <div class="card-desc" style="margin-bottom:0">所有已完成的压测记录，按时间倒序，点击行可查看详情</div>
+                </div>
+                <div class="head-actions">
+                    <button class="btn btn-ghost btn-sm" id="btn-compare">A/B 对比</button>
+                    <button class="btn btn-danger btn-sm" id="btn-clear">清空记录</button>
+                </div>
+            </div>
+
+            <!-- 筛选 -->
+            <div class="form-grid mb-3">
+                <div class="field">
+                    <label>压测模式</label>
+                    <select class="select" id="f-mode">
+                        <option value="">全部模式</option>
+                        <option value="fixed">固定压测</option>
+                        <option value="auto">自动增压</option>
+                        <option value="concurrency">恒定并发</option>
+                        <option value="concurrency-ramp">并发阶梯</option>
+                        <option value="seek">自动寻优</option>
+                        <option value="probe">能力探测</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>开始日期</label>
+                    <input type="date" class="input" id="f-start">
+                </div>
+                <div class="field">
+                    <label>结束日期</label>
+                    <input type="date" class="input" id="f-end">
+                </div>
+                <div class="field">
+                    <label>&nbsp;</label>
+                    <div class="flex gap-2">
+                        <button class="btn btn-primary" id="btn-filter" style="flex:1">筛选</button>
+                        <button class="btn btn-ghost" id="btn-reset" style="flex:1">重置</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 列表 -->
+            <div class="table-wrap">
+                <table class="table" style="min-width:1020px">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>目标 / 模型</th>
+                            <th>模式</th>
+                            <th class="num">请求数</th>
+                            <th class="num">成功率</th>
+                            <th class="num">P95</th>
+                            <th class="num">平均耗时</th>
+                            <th class="num">Token</th>
+                            <th style="text-align:right">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody">
+                        <tr><td colspan="9" style="text-align:center;padding:48px 0;color:var(--text-3)"><span class="spinner"></span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination hidden" id="pager"></div>
+        </div>
+    </div>
+
+    <script src="/assets/js/i18n.js"></script>
+    <script src="/assets/js/i18n/en.common.js"></script>
+    <script src="/assets/js/i18n/en.history.js"></script>
+    <script src="/assets/js/api.js"></script>
+    <script src="/assets/js/ws.js"></script>
+    <script src="/assets/js/layout.js"></script>
+    <script>
+        (function () {
+            'use strict';
+
+            const MODE_TEXT = {
+                fixed: t('固定压测'),
+                auto: t('自动增压'),
+                concurrency: t('恒定并发'),
+                'concurrency-ramp': t('并发阶梯'),
+                seek: t('自动寻优'),
+                probe: t('能力探测'),
+            };
+            const MODE_BADGE = {
+                auto: 'accent',
+                seek: 'accent',
+                fixed: 'info',
+                concurrency: 'success',
+                'concurrency-ramp': 'success',
+                probe: 'warning',
+            };
+
+            const state = {
+                page: 1,
+                pageSize: 20,
+                filters: { mode: '', start: '', end: '' },
+            };
+
+            let lastItems = []; // 当前页列表，供 A/B 对比弹窗取候选项
+
+            function hasFilter() {
+                const f = state.filters;
+                return !!(f.mode || f.start || f.end);
+            }
+
+            function fmtDT(iso, withSec) {
+                if (!iso) return '-';
+                const d = new Date(iso);
+                if (isNaN(d.getTime())) return String(iso);
+                const p = (x) => String(x).padStart(2, '0');
+                const base = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+                return withSec ? `${base}:${p(d.getSeconds())}` : base;
+            }
+
+            function rateClass(rate) {
+                const v = Number(rate) || 0;
+                return v >= 90 ? 'text-success' : v >= 70 ? 'text-warning' : 'text-danger';
+            }
+
+            function matchFilter(item) {
+                const f = state.filters;
+                if (f.mode && item.test_mode !== f.mode) return false;
+                const t = new Date(item.start_time).getTime();
+                if (f.start && t < new Date(f.start + 'T00:00:00').getTime()) return false;
+                if (f.end && t > new Date(f.end + 'T23:59:59.999').getTime()) return false;
+                return true;
+            }
+
+            /** 筛选激活时后端不支持过滤参数，拉取全部分页后在本地过滤 */
+            async function fetchAll() {
+                const out = [];
+                let page = 1;
+                const MAX_PAGES = 20; // 上限 2000 条，防止超大库拖死页面
+                while (page <= MAX_PAGES) {
+                    const d = await API.get(`/api/history?page=${page}&pageSize=100`);
+                    const list = d.list || [];
+                    out.push(...list);
+                    const totalPages = d.totalPages || 1;
+                    if (!list.length || page >= totalPages) break;
+                    page++;
+                }
+                return out;
+            }
+
+            async function load() {
+                const tbody = document.getElementById('tbody');
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:48px 0;color:var(--text-3)"><span class="spinner"></span></td></tr>';
+
+                try {
+                    let items;
+                    let total;
+                    let totalPages;
+                    if (hasFilter()) {
+                        const all = await fetchAll();
+                        const filtered = all.filter(matchFilter);
+                        total = filtered.length;
+                        totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+                        if (state.page > totalPages) state.page = totalPages;
+                        const from = (state.page - 1) * state.pageSize;
+                        items = filtered.slice(from, from + state.pageSize);
+                        render(items, total, totalPages);
+                    } else {
+                        const d = await API.get(`/api/history?page=${state.page}&pageSize=${state.pageSize}`);
+                        items = d.list || [];
+                        total = d.total != null ? d.total : items.length;
+                        totalPages = d.totalPages || Math.max(1, Math.ceil(total / state.pageSize));
+                        if (state.page > totalPages) state.page = totalPages;
+                        render(items, total, totalPages);
+                    }
+                } catch (e) {
+                    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">${Layout.icons.alert}<div class="e-title">${t('加载失败：')}${esc(e.message)}</div></div></td></tr>`;
+                    document.getElementById('pager').classList.add('hidden');
+                }
+            }
+
+            function render(items, total, totalPages) {
+                const tbody = document.getElementById('tbody');
+
+                if (!items.length) {
+                    lastItems = [];
+                    updateStats([]);
+                    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">${Layout.icons.empty}<div class="e-title">${t('暂无历史记录')}</div><div>${t('开始压测后，记录会自动保存在这里')}</div></div></td></tr>`;
+                    document.getElementById('pager').classList.add('hidden');
+                    return;
+                }
+
+                updateStats(items);
+                lastItems = items;
+                tbody.innerHTML = items.map((it) => {
+                    const modeText = MODE_TEXT[it.test_mode] || it.test_mode || '-';
+                    const modeBadge = MODE_BADGE[it.test_mode] || 'muted';
+                    const reqType = it.request_type === 'stream' ? t('流式') : t('非流式');
+                    const rate = Number(it.success_rate) || 0;
+                    return `
+                        <tr data-id="${it.id}">
+                            <td>
+                                <div class="cell-title">${fmtDT(it.start_time)}</div>
+                                <div class="cell-sub">${t('时长')} ${fmtDuration(it.duration)}</div>
+                            </td>
+                            <td>
+                                <div class="cell-title">${esc(it.model_name)}</div>
+                                <div class="cell-sub" title="${esc(it.test_url)}">${esc(it.test_url)}</div>
+                            </td>
+                            <td><span class="badge ${modeBadge}">${esc(modeText)} · ${reqType}</span></td>
+                            <td class="num">${fmtInt(it.total_requests)}</td>
+                            <td class="num"><span class="rate ${rateClass(rate)}">${rate}%</span></td>
+                            <td class="num">${fmtMs(it.p95_response_time)}</td>
+                            <td class="num">${fmtMs(it.avg_response_time)}</td>
+                            <td class="num">${fmtTokens(it.total_tokens)}</td>
+                            <td>
+                                <div class="flex gap-2" style="justify-content:flex-end">
+                                    <button class="btn btn-ghost btn-sm" data-act="view">${t('查看')}</button>
+                                    <button class="btn btn-ghost btn-sm" data-act="compare" title="${t('与另一条记录做 A/B 对比')}">${t('对比')}</button>
+                                    <button class="btn btn-ghost btn-sm" data-act="json" title="${t('导出 JSON')}">JSON</button>
+                                    <button class="btn btn-ghost btn-sm" data-act="csv" title="${t('导出 CSV')}">CSV</button>
+                                    <button class="btn btn-danger btn-sm" data-act="del">${Layout.icons.trash}</button>
+                                </div>
+                            </td>
+                        </tr>`;
+                }).join('');
+
+                renderPager(total, totalPages);
+            }
+
+            function pageWindow(page, total) {
+                const start = Math.max(1, Math.min(page - 2, total - 4));
+                const end = Math.min(total, start + 4);
+                const arr = [];
+                for (let i = start; i <= end; i++) arr.push(i);
+                return arr;
+            }
+
+            function renderPager(total, totalPages) {
+                const pager = document.getElementById('pager');
+                if (totalPages <= 1 && total <= state.pageSize) {
+                    pager.innerHTML = `<span class="page-info">${t('共')} ${fmtInt(total)} ${t('条')}</span>`;
+                    pager.classList.remove('hidden');
+                    return;
+                }
+                pager.innerHTML = `
+                    <span class="page-info">${t('共')} ${fmtInt(total)} ${t('条')} · ${t('第 {page} / {totalPages} 页').replace('{page}', state.page).replace('{totalPages}', totalPages)}</span>
+                    <button class="pg-btn" data-p="prev" ${state.page <= 1 ? 'disabled' : ''}>${t('上一页')}</button>
+                    ${pageWindow(state.page, totalPages).map((n) => `<button class="pg-btn ${n === state.page ? 'active' : ''}" data-p="${n}">${n}</button>`).join('')}
+                    <button class="pg-btn" data-p="next" ${state.page >= totalPages ? 'disabled' : ''}>${t('下一页')}</button>`;
+                pager.classList.remove('hidden');
+            }
+
+            function updateStats(items) {
+                const n = items.length;
+                const req = items.reduce((s, i) => s + (Number(i.total_requests) || 0), 0);
+                const rate = n ? items.reduce((s, i) => s + (Number(i.success_rate) || 0), 0) / n : 0;
+                const p95 = n ? items.reduce((s, i) => s + (Number(i.p95_response_time) || 0), 0) / n : 0;
+                document.getElementById('s-count').textContent = fmtInt(n);
+                document.getElementById('s-req').textContent = fmtInt(req);
+                document.getElementById('s-rate').textContent = fmtPct(rate, 1);
+                document.getElementById('s-p95').textContent = n ? fmtMs(p95) : '-';
+            }
+
+            function viewDetail(id) {
+                window.location.href = `/detail.html?id=${id}`;
+            }
+
+            async function exportRow(id, fmt) {
+                try {
+                    await API.download(`/api/history/${id}/export/${fmt}`, `llm-api-eval_export_${id}.${fmt}`);
+                    toast.success(fmt.toUpperCase() + t(' 导出成功'));
+                } catch (e) {
+                    toast.error(t('导出失败：') + e.message);
+                }
+            }
+
+            // ============ A/B 历史对比 ============
+            function cmpBrief(x, tag) {
+                return `<div class="cmp-brief">
+                    <span class="badge info">${tag}</span>
+                    <b>#${x.id} ${esc(x.model_name || '-')}</b>
+                    <span class="cell-sub">${esc(x.test_url || '')} · ${MODE_TEXT[x.test_mode] || x.test_mode || '-'} · ${fmtDT(x.start_time, true)}</span>
+                </div>`;
+            }
+
+            function cmpFmtVal(key, v) {
+                if (v == null) return '-';
+                if (key === 'duration') return fmtDuration(v);
+                if (key.endsWith('_response_time') || key === 'ttfb_p95' || key === 'tpot_p95') return fmtMs(v);
+                if (key === 'success_rate') return fmtPct(v, 2);
+                if (key === 'estimated_cost') return String(v);
+                return fmtInt(v);
+            }
+
+            function cmpFmtDelta(m) {
+                if (m.delta == null) return '<span style="color:var(--text-3)">-</span>';
+                const sign = m.delta > 0 ? '+' : '';
+                const pct = m.deltaPct != null ? `<span style="color:var(--text-3)">（${sign}${m.deltaPct}%）</span>` : '';
+                // 绿=B 优于 A；红=B 劣于 A
+                const cls = m.winner === 'b' ? 'text-success' : m.winner === 'a' ? 'text-danger' : '';
+                return `<span class="${cls}">${sign}${m.delta}${m.unit ? ' ' + m.unit : ''}</span> ${pct}`;
+            }
+
+            function cmpCell(m, side) {
+                const win = m.winner === side;
+                return `<td class="num ${win ? 'cmp-win' : ''}">${cmpFmtVal(m.key, m[side])}${win ? ' ✓' : ''}</td>`;
+            }
+
+            async function runCompare(aId, bId, container) {
+                container.innerHTML = '<div style="text-align:center;padding:32px 0"><span class="spinner"></span></div>';
+                try {
+                    const d = await API.get(`/api/history/compare?ids=${aId},${bId}`);
+                    container.innerHTML = `
+                        ${cmpBrief(d.a, t('A 基准'))}
+                        ${cmpBrief(d.b, t('B 对比'))}
+                        <div class="table-wrap mt-2">
+                            <table class="table" style="min-width:560px">
+                                <thead>
+                                    <tr><th>${t('指标')}</th><th class="num">A</th><th class="num">B</th><th class="num">${t('变化（B − A）')}</th></tr>
+                                </thead>
+                                <tbody>
+                                    ${d.metrics.map((m) => `
+                                        <tr>
+                                            <td>${esc(m.label)}</td>
+                                            ${cmpCell(m, 'a')}
+                                            ${cmpCell(m, 'b')}
+                                            <td class="num">${cmpFmtDelta(m)}</td>
+                                        </tr>`).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="hint" style="margin-top:8px">${t('✓ 与绿色表示 B 侧更优；延迟类指标越低越好，吞吐类指标越高越好。')}</div>`;
+                } catch (e) {
+                    container.innerHTML = `<div class="empty-state">${Layout.icons.alert}<div class="e-title">${t('对比失败：')}${esc(e.message)}</div></div>`;
+                }
+            }
+
+            async function openCompareModal(preA) {
+                const items = lastItems;
+                if (items.length < 2) {
+                    toast.warning(t('至少需要两条测试记录才能对比，请先完成两次压测'));
+                    return;
+                }
+
+                const opt = (sel) => items.map((it) =>
+                    `<option value="${it.id}" ${String(it.id) === String(sel) ? 'selected' : ''}>#${it.id} · ${esc(it.model_name || '-')} · ${fmtDT(it.start_time)}</option>`
+                ).join('');
+
+                // 指定了基准记录 → A 固定，B 默认取相邻另一条；否则取前两条
+                const aDefault = preA != null ? preA : items[0].id;
+                const bDefault = preA != null
+                    ? (String(items[0].id) === String(preA) ? items[1].id : items[0].id)
+                    : items[1].id;
+
+                const body = document.createElement('div');
+                body.innerHTML = `
+                    <div class="compare-pick">
+                        <div class="field"><label>${t('基准记录 A')}</label><select class="select" id="cmp-a">${opt(aDefault)}</select></div>
+                        <div class="cmp-vs">VS</div>
+                        <div class="field"><label>${t('对比记录 B')}</label><select class="select" id="cmp-b">${opt(bDefault)}</select></div>
+                    </div>
+                    <div id="cmp-result" class="mt-3">
+                        <div class="empty-state" style="padding:20px 0"><div class="e-title">${t('点击“开始对比”查看逐项指标差异')}</div></div>
+                    </div>`;
+
+                const foot = document.createElement('div');
+                foot.innerHTML = `<button class="btn btn-ghost" data-close>${t('关闭')}</button><button class="btn btn-primary" id="cmp-run">${t('开始对比')}</button>`;
+
+                const m = Layout.modal({ title: t('A/B 历史对比'), body, footer: foot, large: true });
+                foot.querySelector('[data-close]').addEventListener('click', m.close);
+                foot.querySelector('#cmp-run').addEventListener('click', () => {
+                    const a = body.querySelector('#cmp-a').value;
+                    const b = body.querySelector('#cmp-b').value;
+                    if (a === b) { toast.warning(t('请选择两条不同的记录')); return; }
+                    runCompare(a, b, body.querySelector('#cmp-result'));
+                });
+
+                // 从行内“对比”按钮进入时，直接按默认组合跑一次
+                if (preA != null) runCompare(aDefault, bDefault, body.querySelector('#cmp-result'));
+            }
+
+            async function deleteRow(id) {
+                const ok = await Layout.confirmDialog(t('确定要<b>删除这条测试记录</b>吗？删除后不可恢复。'), { danger: true, okText: t('删除') });
+                if (!ok) return;
+                try {
+                    await API.del(`/api/history/${id}`);
+                    toast.success(t('记录已删除'));
+                    load();
+                } catch (e) {
+                    toast.error(t('删除失败：') + e.message);
+                }
+            }
+
+            async function clearAll() {
+                const ok = await Layout.confirmDialog(t('确定要<b>清空所有历史记录</b>吗？此操作不可恢复！'), { danger: true, okText: t('全部清空') });
+                if (!ok) return;
+                try {
+                    await API.post('/api/history/clear');
+                    toast.success(t('历史记录已清空'));
+                    state.page = 1;
+                    load();
+                } catch (e) {
+                    toast.error(t('清空失败：') + e.message);
+                }
+            }
+
+            function applyFilter() {
+                state.filters = {
+                    mode: document.getElementById('f-mode').value,
+                    start: document.getElementById('f-start').value,
+                    end: document.getElementById('f-end').value,
+                };
+                state.page = 1;
+                load();
+            }
+
+            function resetFilter() {
+                document.getElementById('f-mode').value = '';
+                document.getElementById('f-start').value = '';
+                document.getElementById('f-end').value = '';
+                state.filters = { mode: '', start: '', end: '' };
+                state.page = 1;
+                load();
+            }
+
+            Layout.init({ active: 'history', title: t('历史报告'), sub: t('压测记录与导出') }).then(() => {
+                const tbody = document.getElementById('tbody');
+                tbody.addEventListener('click', (e) => {
+                    const btn = e.target.closest('button[data-act]');
+                    if (btn) {
+                        e.stopPropagation();
+                        const id = btn.closest('tr').dataset.id;
+                        const act = btn.dataset.act;
+                        if (act === 'view') viewDetail(id);
+                        else if (act === 'del') deleteRow(id);
+                        else if (act === 'json') exportRow(id, 'json');
+                        else if (act === 'csv') exportRow(id, 'csv');
+                        else if (act === 'compare') openCompareModal(id);
+                        return;
+                    }
+                    const tr = e.target.closest('tr[data-id]');
+                    if (tr) viewDetail(tr.dataset.id);
+                });
+
+                document.getElementById('pager').addEventListener('click', (e) => {
+                    const btn = e.target.closest('.pg-btn');
+                    if (!btn || btn.disabled) return;
+                    const p = btn.dataset.p;
+                    if (p === 'prev') state.page--;
+                    else if (p === 'next') state.page++;
+                    else state.page = Number(p);
+                    load();
+                });
+
+                document.getElementById('btn-filter').addEventListener('click', applyFilter);
+                document.getElementById('btn-reset').addEventListener('click', resetFilter);
+                ['f-mode', 'f-start', 'f-end'].forEach((id) => {
+                    document.getElementById(id).addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') applyFilter();
+                    });
+                });
+                document.getElementById('btn-clear').addEventListener('click', clearAll);
+                document.getElementById('btn-compare').addEventListener('click', () => openCompareModal(null));
+
+                load();
+            });
+        })();
+    </script>
+</body>
+</html>

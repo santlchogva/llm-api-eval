@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM-API-Eval · 定时任务</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <style>
+        .group-title {
+            font-size: var(--fs-md); font-weight: 600; color: var(--text-1);
+            margin: 18px 0 12px; display: flex; align-items: center; gap: 8px;
+        }
+        .cron-quick { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        .cell-main { font-weight: 550; color: var(--text-1); }
+        .cell-sub { font-size: var(--fs-xs); color: var(--text-3); margin-top: 2px; max-width: 260px; }
+        .switch.sm input + .track { transform: scale(0.9); }
+    </style>
+</head>
+<body data-page="schedule">
+    <div id="page-content">
+
+        <div class="note mb-3">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span>定时任务可在指定时间自动执行压测，支持<strong>一次性执行</strong>和 <strong>Cron 表达式周期执行</strong>两种模式。</span>
+        </div>
+
+        <section class="card">
+            <div class="card-head-row">
+                <div>
+                    <div class="card-title">任务列表</div>
+                    <div class="card-desc" id="listDesc">共 0 个任务</div>
+                </div>
+                <div class="head-actions">
+                    <button class="btn btn-primary" id="createBtn">+ 创建任务</button>
+                </div>
+            </div>
+            <div id="scheduleList"></div>
+        </section>
+    </div>
+
+    <script src="/assets/js/i18n.js"></script>
+    <script src="/assets/js/i18n/en.common.js"></script>
+    <script src="/assets/js/i18n/en.schedule.js"></script>
+    <script src="/assets/js/api.js"></script>
+    <script src="/assets/js/ws.js"></script>
+    <script src="/assets/js/layout.js"></script>
+    <script>
+    (function () {
+        'use strict';
+
+        Layout.init({ active: 'schedule', title: '定时任务' }).then(function () {
+
+            const PROVIDERS = [
+                { value: 'openai', label: t('OpenAI 接口（/v1/chat/completions）') },
+                { value: 'responses', label: t('OpenAI Responses 接口（/v1/responses）') },
+                { value: 'anthropic', label: t('Anthropic 接口（/v1/messages）') },
+                { value: 'gemini', label: t('Gemini 接口') },
+            ];
+            const CRON_QUICKS = [
+                { label: t('每 5 分钟'), expr: '*/5 * * * *' },
+                { label: t('每 30 分钟'), expr: '*/30 * * * *' },
+                { label: t('每小时'), expr: '0 * * * *' },
+                { label: t('每天 9 点'), expr: '0 9 * * *' },
+                { label: t('每周一 0 点'), expr: '0 0 * * 1' },
+            ];
+
+            let schedules = [];
+
+            /* ---------------- 工具 ---------------- */
+            function toLocalInput(iso) {
+                const d = iso ? new Date(iso) : new Date();
+                if (isNaN(d.getTime())) return '';
+                const off = d.getTime() - d.getTimezoneOffset() * 60000;
+                return new Date(off).toISOString().slice(0, 16);
+            }
+
+            function defaultRunAt() {
+                const now = new Date();
+                now.setHours(now.getHours() + 1);
+                now.setMinutes(0);
+                now.setSeconds(0);
+                return toLocalInput(now.toISOString());
+            }
+
+            function fmtSchedule(s) {
+                return s.scheduleType === 'once'
+                    ? (s.runAt ? new Date(s.runAt).toLocaleString('zh-CN') : '-')
+                    : (s.cronExpression || '-');
+            }
+
+            function typeBadge(s) {
+                return s.scheduleType === 'once'
+                    ? `<span class="badge accent">${t('一次性')}</span>`
+                    : `<span class="badge info">${t('周期执行')}</span>`;
+            }
+
+            /* ---------------- 列表 ---------------- */
+            async function loadSchedules() {
+                const box = document.getElementById('scheduleList');
+                try {
+                    schedules = (await API.get('/api/schedules')) || [];
+                    document.getElementById('listDesc').textContent = `${t('共')} ${schedules.length} ${t('个任务')}`;
+                    renderSchedules();
+                } catch (error) {
+                    box.innerHTML = `<div class="empty-state">${Layout.icons.alert}<div class="e-title">${t('加载失败：')}${esc(error.message)}</div></div>`;
+                }
+            }
+
+            function renderSchedules() {
+                const box = document.getElementById('scheduleList');
+                if (!schedules.length) {
+                    box.innerHTML = `<div class="empty-state">${Layout.icons.empty}<div class="e-title">${t('暂无定时任务')}</div><div style="font-size:var(--fs-sm)">${t('点击右上角「创建任务」按钮添加新的定时任务')}</div></div>`;
+                    return;
+                }
+
+                box.innerHTML = `
+                    <div class="table-wrap"><table class="table">
+                        <thead><tr>
+                            <th>${t('任务')}</th><th>${t('调度配置')}</th><th>${t('目标模型')}</th><th style="width:70px">${t('启用')}</th>
+                            <th>${t('下次执行')}</th><th>${t('上次执行')}</th><th style="text-align:right;width:130px">${t('操作')}</th>
+                        </tr></thead>
+                        <tbody>${schedules.map((s) => {
+                            const tc = s.testConfig || {};
+                            return `
+                            <tr data-id="${s.id}">
+                                <td>
+                                    <div class="cell-main">${esc(s.name)} ${typeBadge(s)}</div>
+                                    ${s.description ? `<div class="cell-sub ellipsis">${esc(s.description)}</div>` : ''}
+                                </td>
+                                <td class="mono">${esc(fmtSchedule(s))}</td>
+                                <td>
+                                    <div>${esc(tc.modelName || '-')}</div>
+                                    <div class="cell-sub ellipsis">${esc(tc.url || '')}</div>
+                                </td>
+                                <td>
+                                    <label class="switch sm" title="${s.enabled ? t('点击禁用') : t('点击启用')}">
+                                        <input type="checkbox" class="tgl" ${s.enabled ? 'checked' : ''}>
+                                        <span class="track"></span>
+                                    </label>
+                                </td>
+                                <td class="muted">${s.nextRunAt ? fmtTime(s.nextRunAt) : '-'}</td>
+                                <td class="muted">${s.lastRunAt ? fmtTime(s.lastRunAt) : t('从未执行')}</td>
+                                <td style="text-align:right;white-space:nowrap">
+                                    <button class="btn btn-ghost btn-sm act-edit">${t('编辑')}</button>
+                                    <button class="btn btn-danger btn-sm act-del">${t('删除')}</button>
+                                </td>
+                            </tr>`;
+                        }).join('')}</tbody>
+                    </table></div>`;
+
+                box.querySelectorAll('tbody tr').forEach((tr) => {
+                    const id = Number(tr.dataset.id);
+                    const schedule = schedules.find((x) => x.id === id);
+
+                    tr.querySelector('.tgl').addEventListener('change', async (e) => {
+                        const cb = e.target;
+                        try {
+                            await API.post(`/api/schedules/${id}/toggle`);
+                            toast.success(cb.checked ? t('任务已启用') : t('任务已禁用'));
+                            loadSchedules();
+                        } catch (error) {
+                            cb.checked = !cb.checked;
+                            toast.error(t('操作失败：') + error.message);
+                        }
+                    });
+                    tr.querySelector('.act-edit').addEventListener('click', () => openEditModal(id));
+                    tr.querySelector('.act-del').addEventListener('click', () => deleteSchedule(id, schedule));
+                });
+            }
+
+            /* ---------------- 创建 / 编辑弹窗 ---------------- */
+            function openModal(editing) {
+                const body = document.createElement('div');
+                body.innerHTML = `
+                    <input type="hidden" id="sc-id" value="${editing ? editing.id : ''}">
+                    <div class="field mb-3">
+                        <label class="req">${t('任务名称')}</label>
+                        <input type="text" id="sc-name" class="input" placeholder="${t('输入任务名称')}" value="${esc(editing ? editing.name : '')}">
+                    </div>
+                    <div class="field mb-3">
+                        <label>${t('任务描述')}</label>
+                        <textarea id="sc-desc" class="textarea" style="min-height:64px" placeholder="${t('输入任务描述（可选）')}">${esc(editing ? (editing.description || '') : '')}</textarea>
+                    </div>
+
+                    <div class="group-title">${t('调度配置')}</div>
+                    <div class="seg mb-3" id="sc-seg">
+                        <button type="button" class="seg-item" data-type="once">${t('一次性执行')}</button>
+                        <button type="button" class="seg-item" data-type="recurring">${t('周期执行')}</button>
+                    </div>
+                    <div id="sc-once-config" class="field mb-3">
+                        <label class="req">${t('执行时间')}</label>
+                        <input type="datetime-local" id="sc-runAt" class="input">
+                        <span class="hint">${t('选择任务执行的具体时间')}</span>
+                    </div>
+                    <div id="sc-cron-config" class="field mb-3 hidden">
+                        <label class="req">${t('Cron 表达式')}</label>
+                        <input type="text" id="sc-cron" class="input input-mono" placeholder="${t('例如: */5 * * * * (每5分钟)')}">
+                        <div class="cron-quick" id="sc-cron-quicks">
+                            ${CRON_QUICKS.map((q) => `<button type="button" class="btn btn-ghost btn-sm" data-cron="${esc(q.expr)}">${esc(q.label)}</button>`).join('')}
+                        </div>
+                        <span class="hint">${t('格式: 分 时 日 月 周 ｜ 示例:')} <span class="kbd">0 9 * * *</span> ${t('每天9点')} · <span class="kbd">*/30 * * * *</span> ${t('每30分钟')} · <span class="kbd">0 0 * * 1</span> ${t('每周一0点')}</span>
+                    </div>
+
+                    <div class="group-title">${t('API 接入配置')}</div>
+                    <div class="form-grid">
+                        <div class="field">
+                            <label class="req">${t('接口协议')}</label>
+                            <select id="sc-providerType" class="select">
+                                ${PROVIDERS.map((p) => `<option value="${p.value}">${p.label}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="req">Base URL</label>
+                            <input type="text" id="sc-url" class="input" placeholder="https://api.openai.com">
+                        </div>
+                        <div class="field">
+                            <label class="req">${t('模型名称')}</label>
+                            <input type="text" id="sc-modelName" class="input" placeholder="gpt-4o">
+                        </div>
+                        <div class="field">
+                            <label class="req">API Key</label>
+                            <input type="password" id="sc-apiKey" class="input" placeholder="sk-...">
+                        </div>
+                        <div class="field">
+                            <label>${t('请求方式')}</label>
+                            <select id="sc-requestType" class="select">
+                                <option value="stream">${t('流式请求')}</option>
+                                <option value="non-stream">${t('非流式请求')}</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>${t('压测模式')}</label>
+                            <select id="sc-mode" class="select">
+                                <option value="fixed">${t('固定压测')}</option>
+                                <option value="auto">${t('自动增压')}</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>${t('目标 RPM')}</label>
+                            <input type="number" id="sc-rpm" class="input" value="60" min="1" max="100000">
+                        </div>
+                        <div class="field">
+                            <label>${t('测试时长（分钟）')}</label>
+                            <input type="number" id="sc-testDuration" class="input" value="5" min="1" max="1440">
+                            <span class="hint">${t('建议设置合理的测试时长')}</span>
+                        </div>
+                    </div>
+                    <div class="field mt-3">
+                        <label>${t('测试请求')}</label>
+                        <textarea id="sc-testPrompt" class="textarea" style="min-height:72px" placeholder="${t('输入测试请求')}">${t('请用两三句话介绍一下你自己。')}</textarea>
+                    </div>
+
+                    <div class="group-title">${t('高级选项')} <span class="badge muted">${t('可选')}</span></div>
+                    <div class="form-grid">
+                        <div class="field span-2">
+                            <label>${t('Prompt 模板')}</label>
+                            <textarea id="sc-promptTemplate" class="textarea" style="min-height:64px" placeholder='${t('可用 {{prompt}} 引用测试请求，如 "你是测试员，请评审: {{prompt}}"（留空则直接使用测试请求）')}'></textarea>
+                        </div>
+                        <div class="field">
+                            <label>${t('预热时长（分钟）')}</label>
+                            <input type="number" id="sc-warmupDuration" class="input" min="0" max="60" placeholder="0">
+                            <span class="hint">${t('正式计时前的预热阶段，结果不计入统计')}</span>
+                        </div>
+                        <div class="field">
+                            <label>${t('Webhook 回调地址')}</label>
+                            <input type="text" id="sc-webhookUrl" class="input" placeholder="https://example.com/callback">
+                            <span class="hint">${t('任务执行完成后回调通知')}</span>
+                        </div>
+                        <div class="field span-2">
+                            <label>${t('断言规则（JSON 数组）')}</label>
+                            <textarea id="sc-assertions" class="textarea" style="min-height:64px" placeholder='${t('[{"type":"status","op":"eq","value":200}]（留空则不做断言）')}'></textarea>
+                        </div>
+                    </div>`;
+
+                const foot = document.createElement('div');
+                foot.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+                foot.innerHTML = `
+                    <button class="btn btn-ghost" id="sc-cancel">${t('取消')}</button>
+                    <button class="btn btn-primary" id="sc-save">${t('保存')}</button>`;
+
+                const m = Layout.modal({
+                    title: editing ? t('编辑定时任务') : t('创建定时任务'),
+                    body, footer: foot, large: true,
+                });
+
+                // 类型切换
+                const seg = body.querySelector('#sc-seg');
+                let scheduleType = editing ? editing.scheduleType : 'once';
+                function updateTypeUI() {
+                    seg.querySelectorAll('.seg-item').forEach((b) => b.classList.toggle('active', b.dataset.type === scheduleType));
+                    body.querySelector('#sc-once-config').classList.toggle('hidden', scheduleType !== 'once');
+                    body.querySelector('#sc-cron-config').classList.toggle('hidden', scheduleType !== 'recurring');
+                }
+                seg.querySelectorAll('.seg-item').forEach((b) => {
+                    b.addEventListener('click', () => { scheduleType = b.dataset.type; updateTypeUI(); });
+                });
+                body.querySelector('#sc-cron-quicks').addEventListener('click', (e) => {
+                    const btn = e.target.closest('[data-cron]');
+                    if (btn) body.querySelector('#sc-cron').value = btn.dataset.cron;
+                });
+
+                // 回填
+                if (editing) {
+                    const tc = editing.testConfig || {};
+                    body.querySelector('#sc-runAt').value = editing.runAt ? toLocalInput(editing.runAt) : '';
+                    body.querySelector('#sc-cron').value = editing.cronExpression || '';
+                    body.querySelector('#sc-providerType').value = tc.providerType || 'openai';
+                    body.querySelector('#sc-url').value = tc.url || '';
+                    body.querySelector('#sc-modelName').value = tc.modelName || '';
+                    body.querySelector('#sc-apiKey').value = tc.apiKey || '';
+                    body.querySelector('#sc-requestType').value = tc.requestType || 'stream';
+                    body.querySelector('#sc-mode').value = tc.mode || 'fixed';
+                    body.querySelector('#sc-rpm').value = tc.rpm != null ? tc.rpm : 60;
+                    body.querySelector('#sc-testDuration').value = tc.testDuration != null ? tc.testDuration : 5;
+                    body.querySelector('#sc-testPrompt').value = tc.testPrompt || '';
+                    body.querySelector('#sc-promptTemplate').value = tc.promptTemplate || '';
+                    if (tc.warmupDuration != null) body.querySelector('#sc-warmupDuration').value = tc.warmupDuration;
+                    body.querySelector('#sc-webhookUrl').value = tc.webhookUrl || '';
+                    if (tc.assertions) body.querySelector('#sc-assertions').value = JSON.stringify(tc.assertions);
+                } else {
+                    body.querySelector('#sc-runAt').value = defaultRunAt();
+                }
+                updateTypeUI();
+
+                body.querySelector('#sc-cancel').addEventListener('click', () => m.close());
+                foot.querySelector('#sc-save').addEventListener('click', () => saveSchedule(m, body, scheduleType));
+            }
+
+            async function saveSchedule(m, body, scheduleType) {
+                const id = body.querySelector('#sc-id').value;
+                const name = body.querySelector('#sc-name').value.trim();
+                const description = body.querySelector('#sc-desc').value.trim();
+
+                if (!name) return toast.warning(t('请输入任务名称'));
+
+                const payload = { name, description, scheduleType };
+
+                if (scheduleType === 'once') {
+                    const runAt = body.querySelector('#sc-runAt').value;
+                    if (!runAt) return toast.warning(t('请选择执行时间'));
+                    payload.runAt = new Date(runAt).toISOString();
+                } else {
+                    const cronExpression = body.querySelector('#sc-cron').value.trim();
+                    if (!cronExpression) return toast.warning(t('请输入 Cron 表达式'));
+                    payload.cronExpression = cronExpression;
+                }
+
+                const testUrl = body.querySelector('#sc-url').value.trim();
+                const modelName = body.querySelector('#sc-modelName').value.trim();
+                const apiKey = body.querySelector('#sc-apiKey').value.trim();
+                if (!testUrl || !modelName || !apiKey) {
+                    return toast.warning(t('请填写完整的 API 接入配置（Base URL、模型名称、API Key）'));
+                }
+
+                const testConfig = {
+                    url: testUrl,
+                    modelName,
+                    apiKey,
+                    providerType: body.querySelector('#sc-providerType').value,
+                    requestType: body.querySelector('#sc-requestType').value,
+                    mode: body.querySelector('#sc-mode').value,
+                    rpm: parseInt(body.querySelector('#sc-rpm').value, 10) || 60,
+                    testDuration: parseInt(body.querySelector('#sc-testDuration').value, 10) || 5,
+                    testPrompt: body.querySelector('#sc-testPrompt').value.trim() || t('请用两三句话介绍一下你自己。'),
+                };
+
+                const promptTemplate = body.querySelector('#sc-promptTemplate').value.trim();
+                if (promptTemplate) testConfig.promptTemplate = promptTemplate;
+                const warmup = parseFloat(body.querySelector('#sc-warmupDuration').value);
+                if (Number.isFinite(warmup) && warmup > 0) testConfig.warmupDuration = warmup;
+                const webhookUrl = body.querySelector('#sc-webhookUrl').value.trim();
+                if (webhookUrl) testConfig.webhookUrl = webhookUrl;
+                const assertionsRaw = body.querySelector('#sc-assertions').value.trim();
+                if (assertionsRaw) {
+                    try {
+                        const parsed = JSON.parse(assertionsRaw);
+                        if (!Array.isArray(parsed)) throw new Error(t('必须是 JSON 数组'));
+                        testConfig.assertions = parsed;
+                    } catch (e) {
+                        return toast.error(t('断言规则格式不合法：') + e.message);
+                    }
+                }
+                payload.testConfig = testConfig;
+
+                try {
+                    if (id) {
+                        await API.put(`/api/schedules/${id}`, payload);
+                        toast.success(t('任务更新成功'));
+                    } else {
+                        await API.post('/api/schedules', payload);
+                        toast.success(t('任务创建成功'));
+                    }
+                    m.close();
+                    loadSchedules();
+                } catch (error) {
+                    toast.error(t('保存失败：') + error.message);
+                }
+            }
+
+            async function openEditModal(id) {
+                try {
+                    const schedule = await API.get(`/api/schedules/${id}`);
+                    openModal(schedule);
+                } catch (error) {
+                    toast.error(t('获取任务详情失败：') + error.message);
+                }
+            }
+
+            async function deleteSchedule(id, schedule) {
+                const name = schedule ? esc(schedule.name) : '#' + id;
+                if (!(await Layout.confirmDialog(`${t('确定删除定时任务')} <b>${name}</b> ${t('吗？删除后不可恢复。')}`, { danger: true, okText: t('删除') }))) return;
+                try {
+                    await API.del(`/api/schedules/${id}`);
+                    toast.success(t('任务已删除'));
+                    loadSchedules();
+                } catch (error) {
+                    toast.error(t('删除失败：') + error.message);
+                }
+            }
+
+            /* ---------------- 初始化 ---------------- */
+            document.getElementById('createBtn').addEventListener('click', () => openModal(null));
+            loadSchedules();
+        });
+    })();
+    </script>
+</body>
+</html>

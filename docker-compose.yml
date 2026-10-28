@@ -1,0 +1,21 @@
+services:
+  llm-api-eval:
+    # 本地构建（推荐）
+    build: .
+    image: llm-api-eval:latest
+
+    container_name: llm-api-eval
+
+    ports:
+      - "8998:8998"
+    environment:
+      - PORT=8998
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-admin}
+      - DEFAULT_SUCCESS_THRESHOLD=${DEFAULT_SUCCESS_THRESHOLD:-80}
+      - DEFAULT_MAX_FAILURES=${DEFAULT_MAX_FAILURES:-10}
+      - DEFAULT_RESPONSE_TIME_THRESHOLD=${DEFAULT_RESPONSE_TIME_THRESHOLD:-150000}
+    restart: unless-stopped
+    volumes:
+      # 持久化数据库文件和日志
+      - ./data:/app/data
+      - ./logs:/app/logs

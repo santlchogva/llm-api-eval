@@ -1,0 +1,71 @@
+// 公共词条（layout / api / 通用按钮）
+(function () {
+  Object.assign(window.I18N_EN, {
+    // 侧边栏导航（layout.js NAV_ITEMS 与分组）
+    '压测控制台': 'Load Test Console',
+    '并行压测': 'Parallel Load Test',
+    '速度测试': 'Speed Test',
+    '质量测试': 'Quality Test',
+    '定时任务': 'Scheduled Tasks',
+    '历史报告': 'History Reports',
+    '压测': 'Load Test',
+    '测试': 'Testing',
+    '数据': 'Data',
+    'LLM API 压测平台': 'LLM API Load Testing Platform',
+    '压测平台': 'Load Testing Platform',
+    // 页面标题（layout.js init 生成 `${title} · LLM-API-Eval`）
+    '压测控制台 · LLM-API-Eval': 'Load Test Console · LLM-API-Eval',
+    '并行压测 · LLM-API-Eval': 'Parallel Load Test · LLM-API-Eval',
+    '速度测试 · LLM-API-Eval': 'Speed Test · LLM-API-Eval',
+    '质量测试 · LLM-API-Eval': 'Quality Test · LLM-API-Eval',
+    '定时任务 · LLM-API-Eval': 'Scheduled Tasks · LLM-API-Eval',
+    '历史报告 · LLM-API-Eval': 'History Reports · LLM-API-Eval',
+    // 时长单位（layout.js fmtDuration）
+    '秒': 's',
+    '分': 'm',
+    '时': 'h',
+    // 通用按钮 / 确认对话框（layout.js confirmDialog）
+    '确认操作': 'Confirm',
+    '确认': 'Confirm',
+    '取消': 'Cancel',
+    '删除': 'Delete',
+    // 顶栏用户菜单 / 角色词
+    '用户管理': 'User Management',
+    '修改密码': 'Change Password',
+    '退出登录': 'Sign Out',
+    '管理员': 'Admin',
+    '用户': 'User',
+    '普通用户': 'User',
+    '切换语言 / Switch language': 'Switch Language',
+    // 修改密码弹窗
+    '当前密码': 'Current Password',
+    '新密码（至少 6 位）': 'New Password (min 6 chars)',
+    '确认新密码': 'Confirm New Password',
+    '确认修改': 'Save Changes',
+    '请填写完整': 'Please fill in all fields',
+    '新密码至少 6 位': 'New password must be at least 6 characters',
+    '两次输入的新密码不一致': 'The two new passwords do not match',
+    '密码修改成功': 'Password changed successfully',
+    // 用户管理弹窗（管理员）
+    '用户名': 'Username',
+    '角色': 'Role',
+    '创建时间': 'Created At',
+    '操作': 'Actions',
+    '添加': 'Add',
+    '降为普通': 'Demote to User',
+    '设为管理员': 'Set as Admin',
+    '不能删除自己': 'You cannot delete yourself',
+    '确定删除用户': 'Are you sure you want to delete user',
+    '？该用户的历史数据将保留但无法再登录。': "? The user's history data will be kept, but they will no longer be able to log in.",
+    '用户已删除': 'User deleted',
+    '角色已更新': 'Role updated',
+    '请填写用户名和密码': 'Please enter a username and password',
+    '用户名（2-32位小写字母/数字/_/-）': 'Username (2-32 chars: lowercase letters/digits/_/-)',
+    '密码（≥6位）': 'Password (≥6 chars)',
+    // api.js 错误提示
+    '请求超时，请稍后重试': 'Request timed out, please try again later',
+    '网络错误，请检查服务器连接': 'Network error, please check the server connection',
+    '登录已失效，请重新登录': 'Session expired, please sign in again',
+    '请求失败': 'Request failed',
+  });
+})();

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM-API-Eval · 登录</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .glow {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.25;
+            pointer-events: none;
+        }
+        .glow-1 { width: 480px; height: 480px; background: #06b6d4; top: -120px; left: -120px; }
+        .glow-2 { width: 420px; height: 420px; background: #6366f1; bottom: -140px; right: -100px; }
+
+        .grid-bg {
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+        }
+
+        .login-card {
+            position: relative;
+            z-index: 1;
+            background: rgba(18, 24, 39, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+            padding: 44px 40px;
+            border-radius: 20px;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            max-width: 420px;
+            animation: rise 0.5s ease;
+        }
+        #lang-toggle {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+            z-index: 2;
+        }
+
+        @keyframes rise {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .brand { text-align: center; margin-bottom: 32px; }
+        .brand-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 54px;
+            height: 54px;
+            border-radius: 15px;
+            background: var(--primary-grad);
+            margin-bottom: 14px;
+            box-shadow: var(--shadow-primary);
+        }
+        .brand-mark svg { width: 28px; height: 28px; }
+        .brand h1 {
+            font-size: 1.7rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            background: linear-gradient(90deg, #22d3ee, #818cf8);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .brand p { color: var(--text-3); font-size: var(--fs-sm); margin-top: 6px; }
+
+        .form-group { margin-bottom: 18px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 7px;
+            color: var(--text-2);
+            font-weight: 500;
+            font-size: var(--fs-sm);
+        }
+
+        .login-input {
+            width: 100%;
+            padding: 12px 15px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-size: var(--fs-md);
+            color: var(--text-1);
+            font-family: var(--font);
+            transition: all 0.25s;
+        }
+        .login-input::placeholder { color: var(--text-3); }
+        .login-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-ring);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 13px;
+            background: var(--primary-grad);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: var(--fs-lg);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+            letter-spacing: 2px;
+            font-family: var(--font);
+        }
+        .login-btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-primary); }
+        .login-btn:active { transform: translateY(0); }
+        .login-btn:disabled { opacity: 0.6; cursor: wait; transform: none; }
+
+        .error {
+            color: var(--danger);
+            font-size: var(--fs-sm);
+            margin-top: 14px;
+            display: none;
+            padding: 10px 12px;
+            background: var(--danger-soft);
+            border: 1px solid rgba(248, 113, 113, 0.25);
+            border-radius: var(--r-sm);
+            text-align: center;
+        }
+        .error.show { display: block; }
+
+        .login-tip {
+            margin-top: 18px;
+            text-align: center;
+            color: var(--text-3);
+            font-size: var(--fs-xs);
+            line-height: 1.7;
+        }
+        .login-tip a { color: #a5b4fc; text-decoration: none; font-weight: 600; }
+        .login-tip a:hover { text-decoration: underline; }
+
+        .page-footer {
+            position: relative;
+            z-index: 1;
+            margin-top: 30px;
+            color: var(--text-3);
+            font-size: var(--fs-xs);
+        }
+    </style>
+</head>
+<body>
+    <div class="grid-bg"></div>
+    <div class="glow glow-1"></div>
+    <div class="glow glow-2"></div>
+
+    <div class="login-card">
+        <button class="btn btn-ghost btn-sm" id="lang-toggle" type="button">EN</button>
+        <div class="brand">
+            <div class="brand-mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 17 5.5 7 9 17M3.4 13.5h4.2M12.5 17V7h3a3.2 3.2 0 0 1 0 6.4h-3M21.5 7v10"></path>
+                </svg>
+            </div>
+            <h1>LLM-API-Eval</h1>
+            <p>大模型 API 接口压测平台</p>
+        </div>
+
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input
+                    type="text"
+                    id="username"
+                    class="login-input"
+                    placeholder="默认 admin"
+                    autocomplete="username"
+                    autocapitalize="off"
+                    spellcheck="false"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input
+                    type="password"
+                    id="password"
+                    class="login-input"
+                    placeholder="请输入密码"
+                    autocomplete="current-password"
+                    required
+                >
+            </div>
+
+            <div class="form-group hidden" id="confirm-group">
+                <label for="confirmPassword">确认密码</label>
+                <input
+                    type="password"
+                    id="confirmPassword"
+                    class="login-input"
+                    placeholder="再次输入密码"
+                    autocomplete="new-password"
+                >
+            </div>
+
+            <button type="submit" class="login-btn" id="login-btn">进入控制台</button>
+
+            <div id="error" class="error"></div>
+
+            <div class="login-tip" id="login-tip">
+                首次启动默认账号 <span class="kbd">admin</span>，初始密码 <span class="kbd">admin</span><br>
+                没有账号？<a href="javascript:void(0)" id="mode-switch">注册新账号</a>
+            </div>
+            <div class="login-tip hidden" id="register-tip">
+                注册后创建普通用户账号，数据与其他用户隔离<br>
+                已有账号？<a href="javascript:void(0)" id="mode-switch-back">返回登录</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="page-footer">
+        LLM-API-Eval <span id="app-version">v1.0.0</span> · API Load Testing Platform
+    </div>
+
+    <script src="/assets/js/i18n.js"></script>
+    <script src="/assets/js/i18n/en.common.js"></script>
+    <script src="/assets/js/i18n/en.login.js"></script>
+    <script>
+        const form = document.getElementById('loginForm');
+        const errorDiv = document.getElementById('error');
+        const passwordInput = document.getElementById('password');
+        const usernameInput = document.getElementById('username');
+        const confirmInput = document.getElementById('confirmPassword');
+        const confirmGroup = document.getElementById('confirm-group');
+        const btn = document.getElementById('login-btn');
+        const loginTip = document.getElementById('login-tip');
+        const registerTip = document.getElementById('register-tip');
+
+        // 语言切换（中 / EN）
+        const lb = document.getElementById('lang-toggle');
+        if (lb) {
+            lb.textContent = I18N.getLang() === 'en' ? '中文' : 'EN';
+            lb.addEventListener('click', () => I18N.toggle());
+        }
+
+        // 登录 / 注册双模式
+        let mode = 'login';
+        function setMode(next) {
+            mode = next;
+            errorDiv.classList.remove('show');
+            const isRegister = mode === 'register';
+            confirmGroup.classList.toggle('hidden', !isRegister);
+            loginTip.classList.toggle('hidden', isRegister);
+            registerTip.classList.toggle('hidden', !isRegister);
+            btn.textContent = isRegister ? t('注册并进入') : t('进入控制台');
+            passwordInput.setAttribute('autocomplete', isRegister ? 'new-password' : 'current-password');
+        }
+        document.getElementById('mode-switch').addEventListener('click', () => setMode('register'));
+        document.getElementById('mode-switch-back').addEventListener('click', () => setMode('login'));
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorDiv.classList.remove('show');
+
+            const isRegister = mode === 'register';
+            if (isRegister && passwordInput.value !== confirmInput.value) {
+                showError(t('两次输入的密码不一致'));
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = isRegister ? t('注册中…') : t('登录中…');
+
+            try {
+                const response = await fetch(isRegister ? '/api/register' : '/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: usernameInput.value.trim() || 'admin',
+                        password: passwordInput.value,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    localStorage.setItem('authToken', data.token);
+                    window.location.href = '/dashboard';
+                    return;
+                }
+                showError(data.error || data.message || (isRegister ? t('注册失败') : t('登录失败')));
+            } catch (error) {
+                showError(t('网络错误，请检查服务器连接'));
+            } finally {
+                btn.disabled = false;
+                btn.textContent = mode === 'register' ? t('注册并进入') : t('进入控制台');
+            }
+        });
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+        }
+
+        window.addEventListener('load', () => {
+            // 已登录则直接进入
+            const token = localStorage.getItem('authToken');
+            if (token) {
+                fetch('/api/users/me', {
+                    headers: { 'Authorization': `Bearer ${token}` },
+                })
+                .then((r) => {
+                    if (r.ok) window.location.href = '/dashboard';
+                    else localStorage.removeItem('authToken');
+                })
+                .catch(() => {});
+            }
+        });
+
+        fetch('/api/version').then(r => r.json()).then(d => {
+            document.getElementById('app-version').textContent = 'v' + d.version;
+        }).catch(() => {});
+    </script>
+</body>
+</html>

@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM-API-Eval · 质量测试</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <style>
+        /* ---------- 页面级补充样式（基于 theme.css 变量） ---------- */
+        .group-title {
+            font-size: var(--fs-md); font-weight: 600; color: var(--text-1);
+            margin: 18px 0 4px; display: flex; align-items: center; gap: 8px;
+        }
+        .group-sub { font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 10px; }
+
+        .checks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 10px; margin-top: 8px;
+        }
+        .check-item {
+            display: flex; gap: 10px; align-items: flex-start;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--r-sm); padding: 10px 12px;
+            cursor: pointer; transition: border-color 0.15s;
+        }
+        .check-item:hover { border-color: var(--border-strong); }
+        .check-item input { margin-top: 4px; accent-color: var(--primary); flex-shrink: 0; }
+        .check-item .name { font-size: var(--fs-md); font-weight: 550; color: var(--text-1); }
+        .check-item .cost { color: var(--warning); font-size: var(--fs-xs); margin-left: 8px; }
+        .check-item .desc { font-size: var(--fs-xs); color: var(--text-3); margin-top: 2px; line-height: 1.5; }
+
+        details.fold {
+            border: 1px dashed var(--border); border-radius: var(--r-sm);
+            padding: 12px 16px; margin-top: 16px;
+        }
+        details.fold summary { cursor: pointer; color: var(--text-2); font-size: var(--fs-sm); user-select: none; }
+        details.fold[open] summary { margin-bottom: 14px; color: var(--text-1); }
+
+        .upload-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .file-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: transparent; border: 1px solid var(--border); color: var(--text-2);
+            border-radius: var(--r-sm); padding: 5px 12px; font-size: var(--fs-xs); cursor: pointer;
+        }
+        .file-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .file-meta { font-size: var(--fs-xs); color: var(--text-3); }
+        .file-meta.active { color: var(--success); }
+        .file-meta .clear { color: var(--danger); cursor: pointer; margin-left: 8px; text-decoration: underline; }
+
+        .result-item { border: 1px solid var(--border); border-radius: var(--r-sm); margin-bottom: 10px; overflow: hidden; }
+        .result-head {
+            display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+            background: var(--surface-2); cursor: pointer; flex-wrap: wrap;
+        }
+        .result-head .title { font-size: var(--fs-md); font-weight: 550; flex: 1; min-width: 140px; }
+        .result-body { padding: 12px 14px; display: none; }
+        .result-item.open .result-body { display: block; }
+
+        .issue { font-size: var(--fs-sm); padding: 4px 0 4px 14px; position: relative; color: var(--text-2); }
+        .issue::before { content: '•'; position: absolute; left: 0; color: var(--text-3); }
+        .issue.fail { color: #fca5a5; }
+        .issue.warn { color: #fcd34d; }
+
+        pre.evidence {
+            background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-sm);
+            padding: 12px; font-family: var(--mono); font-size: var(--fs-xs); line-height: 1.55;
+            overflow-x: auto; color: var(--text-2); max-height: 320px; margin-top: 10px; white-space: pre;
+        }
+        table.diff td.official { color: #7dd3fc; }
+        table.diff td.local { color: #fcd34d; }
+
+        .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+        .usage-item { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 12px; }
+        .usage-item .k { font-size: var(--fs-xs); color: var(--text-3); }
+        .usage-item .v { font-size: var(--fs-lg); font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+        .usage-item .v.hit { color: var(--success); }
+        .usage-item .v.miss { color: var(--text-3); }
+        .usage-item .v.warn { color: var(--warning); }
+
+        .conclusion {
+            background: var(--primary-soft); border-left: 3px solid var(--primary);
+            padding: 12px 16px; border-radius: 0 var(--r-sm) var(--r-sm) 0;
+            font-size: var(--fs-md); color: var(--text-2); margin-bottom: 18px; line-height: 1.7;
+        }
+        .curl-item { margin-bottom: 14px; }
+        .curl-item:last-child { margin-bottom: 0; }
+        .curl-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: var(--fs-xs); color: var(--text-2); }
+        .curl-note { font-size: var(--fs-xs); color: var(--text-3); margin-top: 8px; line-height: 1.6; }
+        #statusText { font-size: var(--fs-sm); }
+    </style>
+</head>
+<body data-page="quality">
+    <div id="page-content">
+
+        <!-- 被测接口与检查项 -->
+        <section class="card">
+            <div class="card-title">被测接口</div>
+            <div class="card-desc">填写中转/网关提供的地址与密钥。系统会用最小成本发一组受控请求，核对其行为是否与官方协议一致。</div>
+
+            <div class="form-grid">
+                <div class="field">
+                    <label>接口协议</label>
+                    <select id="protocol" class="select">
+                        <option value="openai">OpenAI 兼容（/v1/chat/completions）</option>
+                        <option value="responses">OpenAI Responses（/v1/responses）</option>
+                        <option value="anthropic">Anthropic（/v1/messages）</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Base URL</label>
+                    <input id="url" class="input" placeholder="https://api.example.com" autocomplete="off">
+                    <span class="hint">不要带 /v1/chat/completions，填到域名即可</span>
+                </div>
+                <div class="field">
+                    <label>API Key</label>
+                    <input id="apiKey" class="input" type="password" placeholder="sk-..." autocomplete="off">
+                </div>
+                <div class="field">
+                    <label>模型名称</label>
+                    <input id="modelName" class="input" placeholder="gpt-4o-mini" autocomplete="off">
+                </div>
+                <div class="field">
+                    <label>推理强度</label>
+                    <select id="reasoningEffort" class="select">
+                        <option value="">跟随模型默认</option>
+                        <option value="none">none（关闭思考）</option>
+                        <option value="low" selected>low（省钱）</option>
+                        <option value="high">high</option>
+                        <option value="max">max</option>
+                    </select>
+                    <span class="hint">原样下发 reasoning_effort；模型不支持该参数会直接报错并记入报告</span>
+                </div>
+            </div>
+
+            <details class="fold">
+                <summary>官方对照（可选）— 填了会双跑并给出字段级差异</summary>
+                <div class="form-grid">
+                    <div class="field">
+                        <label>对照协议</label>
+                        <select id="baseProtocol" class="select">
+                            <option value="openai">OpenAI 兼容</option>
+                            <option value="responses">OpenAI Responses</option>
+                            <option value="anthropic">Anthropic</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>官方 Base URL</label>
+                        <input id="baseUrl" class="input" placeholder="https://api.openai.com" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label>官方 API Key</label>
+                        <input id="baseApiKey" class="input" type="password" placeholder="sk-..." autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label>官方模型名</label>
+                        <input id="baseModel" class="input" placeholder="gpt-4o-mini" autocomplete="off">
+                        <span class="hint">留空则不启用对照，仅按协议规范判定</span>
+                    </div>
+                </div>
+            </details>
+
+            <div class="group-title">多模态素材 <span class="badge muted">仅多模态检查项使用</span></div>
+            <div class="form-grid">
+                <div class="field">
+                    <label>图片素材</label>
+                    <input id="imageUrl" class="input" placeholder="https://.../sample.png" autocomplete="off">
+                    <div class="upload-row">
+                        <label class="file-btn" for="imageFile">选择本地图片</label>
+                        <input type="file" id="imageFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                        <span class="file-meta" id="imageMeta">使用默认地址</span>
+                    </div>
+                    <span class="hint">填 URL 或上传本地文件；本地文件会转成 base64 内联下发</span>
+                </div>
+                <div class="field">
+                    <label>视频素材</label>
+                    <input id="videoUrl" class="input" placeholder="https://.../sample.mp4" autocomplete="off">
+                    <div class="upload-row">
+                        <label class="file-btn" for="videoFile">选择本地视频</label>
+                        <input type="file" id="videoFile" accept="video/mp4,video/webm,video/quicktime" hidden>
+                        <span class="file-meta" id="videoMeta">使用默认地址</span>
+                    </div>
+                    <div class="upload-row">
+                        <span class="hint">抽帧 fps</span>
+                        <input id="videoFps" class="input" type="number" min="0.1" max="5" step="0.1" placeholder="1" style="width:96px">
+                        <span class="hint">留空则不下发该参数</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="group-title">联网搜索工具 <span class="badge muted">可选</span></div>
+            <div class="form-grid">
+                <div class="field">
+                    <label>tools 格式预设</label>
+                    <select id="searchPreset" class="select">
+                        <option value="">不使用预设（按协议默认）</option>
+                        <option value="zhipu">智谱 GLM · web_search 对象</option>
+                        <option value="kimi">Kimi · builtin_function $web_search</option>
+                        <option value="openai">OpenAI hosted · web_search_preview</option>
+                        <option value="responses">OpenAI Responses · web_search</option>
+                        <option value="anthropic">Anthropic · web_search_20250305</option>
+                    </select>
+                    <span class="hint">选中后自动填入右侧 tools JSON，可继续手工修改</span>
+                </div>
+                <div class="field">
+                    <label>tools JSON（留空则按协议默认下发）</label>
+                    <input id="searchTools" class="input input-mono" placeholder='[{"type":"web_search","web_search":{"enable":true,"count":5}}]' autocomplete="off">
+                    <span class="hint">各厂商格式不同，不做厂商适配：智谱填 web_search 对象，Kimi 填 builtin_function 的 $web_search；模型不支持会原样返回报错</span>
+                </div>
+            </div>
+
+            <div class="group-title">检查项</div>
+            <div class="group-sub">默认已勾选全部低成本项，整轮约 1~2k token。</div>
+            <div class="checks-grid" id="checksGrid"></div>
+
+            <details class="fold" id="curlBox">
+                <summary>查看等价 curl 命令（默认折叠，随勾选项与参数实时更新）</summary>
+                <div id="curlList"></div>
+                <div class="curl-note">密钥以 $API_KEY 占位；参数原样下发，不做厂商适配 —— 模型支持就正常返回，不支持则把原始报错记录到报告里。</div>
+            </details>
+
+            <div class="flex items-center gap-3 flex-wrap mt-4">
+                <button class="btn btn-primary" id="runBtn">开始质量测试</button>
+                <button class="btn btn-ghost" id="sampleBtn">示例报告</button>
+                <button class="btn btn-ghost hidden" id="exportBtn">导出 Markdown 报告</button>
+                <span id="statusText" class="muted"></span>
+            </div>
+        </section>
+
+        <!-- 报告 -->
+        <section class="card hidden" id="reportCard">
+            <div class="card-title">质量验证报告</div>
+            <div class="card-desc" id="reportMeta"></div>
+            <div class="conclusion" id="conclusion"></div>
+            <div class="stat-grid mb-4" id="summaryStats"></div>
+            <div class="usage-grid" id="usageGrid"></div>
+
+            <div id="capBlock">
+                <div class="group-title">能力支持情况</div>
+                <div class="table-wrap mt-2">
+                    <table class="table diff">
+                        <thead>
+                            <tr><th style="width:220px">能力 / 参数</th><th style="width:110px">结论</th><th>依据（状态码 / 原始报错）</th></tr>
+                        </thead>
+                        <tbody id="capBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="diffBlock" class="hidden">
+                <div class="group-title">官方 vs 本地 差异明细</div>
+                <div class="table-wrap mt-2">
+                    <table class="table diff">
+                        <thead>
+                            <tr><th style="width:150px">检查项</th><th style="width:220px">字段路径</th><th>官方</th><th>本地</th><th style="width:90px">类型</th></tr>
+                        </thead>
+                        <tbody id="diffBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="group-title">逐项结果</div>
+            <div id="resultsList" class="mt-2"></div>
+        </section>
+
+        <!-- 历史报告 -->
+        <section class="card">
+            <div class="card-head-row">
+                <div>
+                    <div class="card-title">历史报告</div>
+                    <div class="card-desc">报告持久化保存在服务端数据库，重启不丢失；内存只缓存最近 30 份用于加速。</div>
+                </div>
+                <div class="head-actions">
+                    <button class="btn btn-danger btn-sm" id="clearBtn">清空报告</button>
+                </div>
+            </div>
+            <div id="historyList"></div>
+        </section>
+    </div>
+
+    <script src="/assets/js/i18n.js"></script>
+    <script src="/assets/js/i18n/en.common.js"></script>
+    <script src="/assets/js/i18n/en.quality.js"></script>
+    <script src="/assets/js/api.js"></script>
+    <script src="/assets/js/ws.js"></script>
+    <script src="/assets/js/layout.js"></script>
+    <script>
+    (function () {
+        'use strict';
+
+        Layout.init({ active: 'quality', title: t('质量测试') }).then(function () {
+            const STATUS_LABEL = { pass: t('通过'), warn: t('警告'), fail: t('失败'), skip: t('跳过') };
+            const SUPPORT_LABEL = { pass: t('支持'), warn: t('部分支持'), fail: t('不支持'), skip: t('未测') };
+            const VERDICT_LABEL = { pass: t('符合'), warn: t('有告警'), fail: t('不符合'), skip: t('未测') };
+            // t() 只处理含汉字的串；纯全角标点在英文模式下用下面的常量替换
+            const EN = !!(window.I18N && window.I18N.getLang() === 'en');
+            const LP = EN ? '(' : '（';
+            const RP = EN ? ')' : '）';
+            const COMMA = EN ? ', ' : '，';
+            const COLON = EN ? ': ' : '：';
+
+            const DEFAULT_IMAGE_URL = 'https://aiplatform.njsrd.com/aigc-resources/uploads/images/b3a8c718b1024ed6999a85f3ae86ea21_20260910093515.png';
+            const DEFAULT_VIDEO_URL = 'https://cos-platform-outputs.agnes-ai.cn/videos/agnes-video-2.5/task_niTw9ll7hJirC4FC5BybvnYeUsxAQvLw.mp4';
+
+            let currentReport = null;
+            let running = false;
+            let jobTimer = null;
+            let CATALOG = [];
+            let DEFAULT_CHECKS = [];
+            const MEDIA = { image: null, video: null };
+            // 页面跳转会中断 fetch，这类中断不该弹错误
+            let pageLeaving = false;
+            window.addEventListener('beforeunload', () => { pageLeaving = true; });
+
+            /* ---------------- 状态提示 ---------------- */
+            function setStatus(text, busy) {
+                const el = document.getElementById('statusText');
+                el.innerHTML = (busy ? '<span class="spinner" style="width:14px;height:14px"></span> ' : '') + esc(text || '');
+                el.classList.toggle('text-warning', !!busy);
+                el.classList.toggle('muted', !busy);
+            }
+
+            /* ---------------- 多模态素材 ---------------- */
+            function formatSize(bytes) {
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+                return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+            }
+
+            function bindUpload(kind) {
+                const fileInput = document.getElementById(kind + 'File');
+                const meta = document.getElementById(kind + 'Meta');
+                const urlInput = document.getElementById(kind === 'image' ? 'imageUrl' : 'videoUrl');
+                const defaultUrl = kind === 'image' ? DEFAULT_IMAGE_URL : DEFAULT_VIDEO_URL;
+                const placeholder = kind === 'image' ? 'https://.../sample.png' : 'https://.../sample.mp4';
+
+                fileInput.addEventListener('change', () => {
+                    const file = fileInput.files && fileInput.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        MEDIA[kind] = { name: file.name, size: file.size, dataUri: reader.result };
+                        urlInput.value = '';
+                        urlInput.disabled = true;
+                        urlInput.placeholder = t('已使用本地文件');
+                        meta.className = 'file-meta active';
+                        meta.innerHTML = `${esc(file.name)} · ${formatSize(file.size)}${t('（base64 内联）')}<span class="clear" data-kind="${kind}">${t('移除')}</span>`;
+                    };
+                    reader.readAsDataURL(file);
+                });
+
+                meta.addEventListener('click', (e) => {
+                    if (!e.target.classList.contains('clear')) return;
+                    MEDIA[kind] = null;
+                    fileInput.value = '';
+                    urlInput.disabled = false;
+                    urlInput.value = defaultUrl;
+                    urlInput.placeholder = placeholder;
+                    meta.className = 'file-meta';
+                    meta.textContent = t('使用默认地址');
+                });
+            }
+
+            /* ---------------- 检查项目录（服务端下发） ---------------- */
+            async function loadChecks() {
+                const grid = document.getElementById('checksGrid');
+                grid.innerHTML = '<div class="muted">' + t('加载检查项…') + '</div>';
+                try {
+                    const data = await API.get('/api/quality/checks');
+                    CATALOG = (data && data.catalog) || [];
+                    DEFAULT_CHECKS = (data && data.defaultChecks) || [];
+                    renderChecks();
+                } catch (error) {
+                    grid.innerHTML = `<div class="text-danger">${t('加载检查项失败：')}${esc(error.message)}</div>`;
+                }
+            }
+
+            function renderChecks() {
+                const grid = document.getElementById('checksGrid');
+                const main = CATALOG.filter((c) => !c.optional);
+                const optional = CATALOG.filter((c) => c.optional);
+                const item = (c) => `
+                    <label class="check-item">
+                        <input type="checkbox" value="${esc(c.id)}" ${DEFAULT_CHECKS.includes(c.id) ? 'checked' : ''}>
+                        <span class="flex-1">
+                            <span class="name">${esc(c.name)}</span><span class="cost">${esc(c.cost)} tokens</span>
+                            <div class="desc">${esc(c.desc)}</div>
+                        </span>
+                    </label>`;
+                grid.innerHTML = main.map(item).join('')
+                    + (optional.length
+                        ? `<div class="group-title" style="grid-column:1/-1">${t('高成本可选项')}</div>` + optional.map(item).join('')
+                        : '');
+            }
+
+            /* ---------------- 执行测试 ---------------- */
+            async function runTest() {
+                if (running) return;
+
+                const url = document.getElementById('url').value.trim();
+                const apiKey = document.getElementById('apiKey').value.trim();
+                const modelName = document.getElementById('modelName').value.trim();
+                if (!url || !apiKey || !modelName) {
+                    toast.warning(t('请填写被测接口的 Base URL、API Key 和模型名称'));
+                    return;
+                }
+
+                const checks = [...document.querySelectorAll('#checksGrid input:checked')].map((el) => el.value);
+                if (checks.length === 0) {
+                    toast.warning(t('请至少选择一个检查项'));
+                    return;
+                }
+
+                const baseUrl = document.getElementById('baseUrl').value.trim();
+                const baseApiKey = document.getElementById('baseApiKey').value.trim();
+                const baseModel = document.getElementById('baseModel').value.trim();
+
+                const payload = {
+                    protocol: document.getElementById('protocol').value,
+                    url, apiKey, modelName, checks,
+                    reasoningEffort: document.getElementById('reasoningEffort').value || undefined,
+                };
+
+                const fps = document.getElementById('videoFps').value.trim() || undefined;
+                const imageUrl = document.getElementById('imageUrl').value.trim();
+                const videoUrl = document.getElementById('videoUrl').value.trim();
+                payload.image = MEDIA.image
+                    ? { source: 'inline', dataUri: MEDIA.image.dataUri, name: MEDIA.image.name }
+                    : (imageUrl ? { source: 'url', url: imageUrl } : null);
+                payload.video = MEDIA.video
+                    ? { source: 'inline', dataUri: MEDIA.video.dataUri, name: MEDIA.video.name, fps }
+                    : (videoUrl ? { source: 'url', url: videoUrl, fps } : null);
+
+                const searchToolsRaw = document.getElementById('searchTools').value.trim();
+                if (searchToolsRaw) {
+                    try {
+                        const parsed = JSON.parse(searchToolsRaw);
+                        payload.searchTools = Array.isArray(parsed) ? parsed : [parsed];
+                    } catch (e) {
+                        toast.error(t('tools JSON 格式不合法：') + e.message);
+                        return;
+                    }
+                }
+
+                if (baseUrl && baseApiKey && baseModel) {
+                    payload.baseline = {
+                        protocol: document.getElementById('baseProtocol').value,
+                        url: baseUrl, apiKey: baseApiKey, modelName: baseModel,
+                    };
+                }
+
+                const btn = document.getElementById('runBtn');
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner"></span>' + t('提交中…');
+                running = true;
+                setStatus(t('正在提交测试…'), true);
+
+                try {
+                    saveFormConfig(); // 记住本轮参数，下一轮（含刷新/切页后）自动带出来
+                    // 异步提交：请求立刻返回，测试在后台跑，页面可以随时离开
+                    const job = await API.post('/api/quality/run-async', payload);
+                    startPollingJob(job);
+                } catch (error) {
+                    running = false;
+                    btn.disabled = false;
+                    btn.textContent = t('开始质量测试');
+                    setStatus('');
+                    if (!pageLeaving) toast.error(t('测试失败：') + error.message);
+                }
+            }
+
+            /* ---------------- 后台任务轮询 ---------------- */
+            function startPollingJob(job) {
+                if (jobTimer) clearInterval(jobTimer);
+
+                const btn = document.getElementById('runBtn');
+                running = true;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner"></span>' + t('测试中…');
+
+                const startedAt = job && job.startedAt ? new Date(job.startedAt).getTime() : Date.now();
+                const withBaseline = !!(job && job.withBaseline);
+
+                const tick = async () => {
+                    try {
+                        const current = await API.get('/api/quality/job');
+                        if (!current) return;
+
+                        if (current.status === 'running') {
+                            const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+                            setStatus(`${t('测试进行中，已用时')} ${sec} ${t('秒（可离开本页，结果会保存在历史记录里）')}`, true);
+                            return;
+                        }
+
+                        clearInterval(jobTimer);
+                        jobTimer = null;
+                        running = false;
+                        btn.disabled = false;
+                        btn.textContent = t('开始质量测试');
+
+                        if (current.status === 'error') {
+                            setStatus('');
+                            toast.error(t('测试失败：') + (current.error || t('未知错误')));
+                            return;
+                        }
+
+                        if (current.reportId) {
+                            const report = await fetchReport(current.reportId);
+                            if (report) {
+                                currentReport = report;
+                                renderReport(report);
+                                setStatus(t('测试完成，用时') + ' ' + Math.round((report.summary.durationMs || 0) / 1000) + ' ' + t('秒'));
+                                loadHistory();
+                            }
+                        }
+                    } catch (error) {
+                        // 网络抖动时继续轮询，不打断用户
+                        setStatus(t('状态查询失败，正在重试…'), true);
+                    }
+                };
+
+                setStatus(withBaseline ? t('已提交，正在双跑（本地 + 官方对照）…') : t('已提交，正在测试…'), true);
+                tick();
+                jobTimer = setInterval(tick, 2000);
+            }
+
+            /** 页面加载时恢复：上次任务若仍在跑则继续轮询 */
+            async function resumeJob() {
+                try {
+                    const status = await API.get('/api/quality/status');
+                    if (status && status.running) setStatus(t('有质量测试正在运行…'), true);
+                } catch (e) { /* 忽略 */ }
+
+                try {
+                    const job = await API.get('/api/quality/job');
+                    if (!job) return;
+                    if (job.status === 'running') {
+                        startPollingJob(job);
+                    } else if (job.status === 'done' && job.reportId) {
+                        // 回到页面时直接展示最近一次结果，不用再点历史
+                        const report = await fetchReport(job.reportId);
+                        if (report) {
+                            currentReport = report;
+                            renderReport(report);
+                            setStatus(t('上次测试已完成：') + new Date(job.finishedAt || job.startedAt).toLocaleString());
+                        }
+                    } else if (job.status === 'error') {
+                        setStatus(t('上次测试失败：') + (job.error || t('未知错误')));
+                    }
+                } catch (error) { /* 忽略：不影响页面使用 */ }
+            }
+
+            async function fetchReport(id) {
+                return API.get('/api/quality/reports/' + encodeURIComponent(id));
+            }
+
+            /* ---------------- 报告渲染 ---------------- */
+            function renderReport(report) {
+                document.getElementById('reportCard').classList.remove('hidden');
+
+                const s = report.summary || {};
+                const meta = [
+                    t('被测：') + (report.target && report.target.url) + LP + (report.target && report.target.protocol) + ' / ' + (report.target && report.target.modelName) + RP,
+                    report.baseline ? t('对照：') + report.baseline.url + LP + report.baseline.modelName + RP : t('对照：未启用（按协议规范判定）'),
+                    t('时间：') + new Date(report.createdAt).toLocaleString(),
+                ].join('　|　');
+                document.getElementById('reportMeta').textContent = meta;
+                document.getElementById('conclusion').textContent = report.conclusion;
+
+                document.getElementById('summaryStats').innerHTML = `
+                    <div class="stat-card accent"><div class="stat-label">${t('综合得分')}</div><div class="stat-value">${fmtInt(s.score)}</div></div>
+                    <div class="stat-card good"><div class="stat-label">${t('通过')}</div><div class="stat-value">${fmtInt(s.pass)}</div></div>
+                    <div class="stat-card warn"><div class="stat-label">${t('警告')}</div><div class="stat-value">${fmtInt(s.warn)}</div></div>
+                    <div class="stat-card bad"><div class="stat-label">${t('失败')}</div><div class="stat-value">${fmtInt(s.fail)}</div></div>
+                    <div class="stat-card"><div class="stat-label">${t('检查项')}</div><div class="stat-value">${fmtInt(s.total)}</div></div>`;
+
+                // Token 用量
+                const usageGrid = document.getElementById('usageGrid');
+                const u = report.usage;
+                if (u) {
+                    const rate = typeof u.cacheHitRate === 'number' ? u.cacheHitRate : null;
+                    usageGrid.innerHTML = `
+                        <div class="usage-item"><div class="k">${t('输入 tokens')}</div><div class="v">${fmtInt(u.promptTokens)}</div></div>
+                        <div class="usage-item"><div class="k">${t('输出 tokens')}</div><div class="v">${fmtInt(u.completionTokens)}</div></div>
+                        <div class="usage-item"><div class="k">${t('其中思考 tokens')}</div><div class="v warn">${fmtInt(u.reasoningTokens || 0)}</div></div>
+                        <div class="usage-item"><div class="k">${t('缓存命中 tokens')}</div><div class="v ${u.cachedTokens > 0 ? 'hit' : 'miss'}">${fmtInt(u.cachedTokens || 0)}</div></div>
+                        <div class="usage-item"><div class="k">${t('缓存命中率')}</div><div class="v ${rate > 0 ? 'hit' : 'miss'}">${rate === null ? '-' : rate + '%'}</div></div>
+                        <div class="usage-item"><div class="k">${t('总 tokens')}</div><div class="v">${fmtInt(u.totalTokens)}</div></div>`;
+                    usageGrid.style.display = 'grid';
+                } else {
+                    usageGrid.style.display = 'none';
+                }
+
+                // 能力支持情况
+                const caps = report.capabilities || [];
+                document.getElementById('capBody').innerHTML = caps.length
+                    ? caps.map((c) => `
+                        <tr>
+                            <td>${esc(c.name)}</td>
+                            <td><span class="badge ${c.supported === true ? 'success' : c.supported === false ? 'danger' : 'muted'}">${c.supported === true ? t('支持') : c.supported === false ? t('不支持') : t('未测')}</span></td>
+                            <td class="mono">${esc(c.detail || '-')}</td>
+                        </tr>`).join('')
+                    : '<tr><td colspan="3" class="muted">' + t('未测试可选能力') + '</td></tr>';
+
+                // 差异
+                const diffBlock = document.getElementById('diffBlock');
+                if (report.differences && report.differences.length > 0) {
+                    diffBlock.classList.remove('hidden');
+                    document.getElementById('diffBody').innerHTML = report.differences.map((d) => `
+                        <tr>
+                            <td>${esc(d.checkName)}</td>
+                            <td class="mono">${esc(d.path)}</td>
+                            <td class="official mono">${esc(fmt(d.official))}</td>
+                            <td class="local mono">${esc(fmt(d.local))}</td>
+                            <td>${esc(d.type)}</td>
+                        </tr>`).join('');
+                } else {
+                    diffBlock.classList.add('hidden');
+                }
+
+                // 逐项结果（折叠面板）
+                document.getElementById('resultsList').innerHTML = (report.checks || []).map((c, i) => {
+                    const issues = (c.issues || []).map((it) =>
+                        `<div class="issue ${esc(it.level)}">${esc(it.message)}</div>`).join('');
+                    const evidence = JSON.stringify(c.evidence, null, 2);
+                    const baselineEvidence = c.baselineEvidence
+                        ? `<div class="mt-2 muted" style="font-size:var(--fs-xs)">${t('官方对照观测值')}</div><pre class="evidence">${esc(JSON.stringify(c.baselineEvidence, null, 2))}</pre>`
+                        : '';
+                    return `
+                        <div class="result-item" data-idx="${i}">
+                            <div class="result-head">
+                                <span class="title">${esc(c.name)}</span>
+                                <span class="badge ${c.status === 'pass' ? 'success' : c.status === 'fail' ? 'danger' : c.status === 'warn' ? 'warning' : 'muted'}">${STATUS_LABEL[c.status] || esc(c.status)}</span>
+                                ${c.baselineStatus ? `<span class="badge ${c.baselineStatus === 'pass' ? 'success' : c.baselineStatus === 'fail' ? 'danger' : c.baselineStatus === 'warn' ? 'warning' : 'muted'}" title="${t('官方对照结果')}">${t('官方')} ${STATUS_LABEL[c.baselineStatus] || esc(c.baselineStatus)}</span>` : ''}
+                                ${c.differences && c.differences.length ? `<span class="badge warning">${c.differences.length} ${t('处差异')}</span>` : ''}
+                            </div>
+                            <div class="result-body">
+                                ${issues || '<div class="issue">' + t('无异常') + '</div>'}
+                                <pre class="evidence">${esc(evidence)}</pre>
+                                ${baselineEvidence}
+                            </div>
+                        </div>`;
+                }).join('');
+
+                document.getElementById('exportBtn').classList.remove('hidden');
+                document.getElementById('reportCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            function fmt(v) {
+                if (v === null) return 'null';
+                if (v === undefined) return '-';
+                if (typeof v === 'object') return JSON.stringify(v);
+                return String(v);
+            }
+
+            /* ---------------- 历史报告 ---------------- */
+            async function loadHistory() {
+                const box = document.getElementById('historyList');
+                try {
+                    const list = await API.get('/api/quality/reports') || [];
+                    if (!list.length) {
+                        box.innerHTML = `<div class="empty-state">${Layout.icons.empty}<div class="e-title">${t('暂无报告')}</div></div>`;
+                        return;
+                    }
+                    box.innerHTML = `
+                        <div class="table-wrap"><table class="table">
+                            <thead><tr><th style="width:170px">${t('时间')}</th><th>${t('被测目标')}</th><th style="width:100px">${t('得分')}</th><th style="text-align:right;width:150px">${t('操作')}</th></tr></thead>
+                            <tbody>${list.map((r) => `
+                                <tr data-id="${esc(r.id)}">
+                                    <td class="muted">${new Date(r.createdAt).toLocaleString()}</td>
+                                    <td class="ellipsis">${esc(r.target && r.target.url)} · ${esc(r.target && r.target.modelName)}${r.baseline ? ` <span class="badge info">${t('含对照')}</span>` : ''}</td>
+                                    <td><span class="badge ${r.summary.fail > 0 ? 'danger' : r.summary.warn > 0 ? 'warning' : 'success'}">${fmtInt(r.summary.score)} ${t('分')}</span></td>
+                                    <td style="text-align:right;white-space:nowrap">
+                                        <button class="btn btn-ghost btn-sm act-view">${t('查看')}</button>
+                                        <button class="btn btn-danger btn-sm act-del">${t('删除')}</button>
+                                    </td>
+                                </tr>`).join('')}</tbody>
+                        </table></div>`;
+
+                    box.querySelectorAll('.act-view').forEach((btn) => {
+                        btn.addEventListener('click', () => openReport(btn.closest('tr').dataset.id));
+                    });
+                    box.querySelectorAll('.act-del').forEach((btn) => {
+                        btn.addEventListener('click', () => deleteReport(btn.closest('tr').dataset.id));
+                    });
+                } catch (error) {
+                    box.innerHTML = `<div class="text-danger">${t('加载失败：')}${esc(error.message)}</div>`;
+                }
+            }
+
+            async function deleteReport(id) {
+                if (!(await Layout.confirmDialog(t('确定删除这份质量报告吗？删除后不可恢复。'), { danger: true, okText: t('删除') }))) return;
+                try {
+                    await API.del('/api/quality/reports/' + encodeURIComponent(id));
+                    if (currentReport && currentReport.id === id) {
+                        currentReport = null;
+                        document.getElementById('reportCard').classList.add('hidden');
+                        document.getElementById('exportBtn').classList.add('hidden');
+                    }
+                    toast.success(t('已删除报告'));
+                    loadHistory();
+                } catch (error) {
+                    toast.error(t('删除失败：') + error.message);
+                }
+            }
+
+            async function clearReports() {
+                const list = await API.get('/api/quality/reports').catch(() => []);
+                if (!(await Layout.confirmDialog(`${t('确定清空全部')} <b>${(list || []).length}</b> ${t('份质量报告吗？删除后不可恢复。')}`, { danger: true, okText: t('全部清空') }))) return;
+                try {
+                    const res = await API.post('/api/quality/reports/clear');
+                    toast.success(`${t('已清空')} ${res && res.deleted != null ? res.deleted : ''} ${t('份报告')}`);
+                    if (currentReport) {
+                        currentReport = null;
+                        document.getElementById('reportCard').classList.add('hidden');
+                        document.getElementById('exportBtn').classList.add('hidden');
+                    }
+                    loadHistory();
+                } catch (error) {
+                    toast.error(t('清空失败：') + error.message);
+                }
+            }
+
+            async function openReport(id) {
+                try {
+                    const report = await fetchReport(id);
+                    if (!report) return;
+                    currentReport = report;
+                    renderReport(report);
+                    setStatus(t('已加载历史报告：') + new Date(report.createdAt).toLocaleString());
+                } catch (error) {
+                    toast.error(t('加载报告失败：') + error.message);
+                }
+            }
+
+            /* ---------------- 示例报告（假数据：不发请求、不写库） ---------------- */
+            function buildSampleReport() {
+                const checks = [
+                    { id: 'connectivity', name: t('接口连通性'), status: 'pass', issues: [], evidence: { httpStatus: 200, model: 'glm-5.3', object: 'chat.completion', usage: { prompt_tokens: 18, completion_tokens: 24, total_tokens: 42 } } },
+                    { id: 'schema', name: t('响应结构契约'), status: 'pass', issues: [], evidence: { httpStatus: 200, missing: [], wrongType: [], extra: [], idPrefix: 'chatcmpl-' } },
+                    { id: 'stream', name: t('流式协议'), status: 'pass', issues: [], evidence: { httpStatus: 200, contentType: 'text/event-stream', chunkLines: 14, parsedEvents: 13, contentDeltas: 12, hasDoneMarker: true, finishReason: 'stop' } },
+                    { id: 'streaming', name: t('流式真实性'), status: 'warn', issues: [{ level: 'warn', message: t('所有 14 个数据块在 18ms 内一次性到达，疑似网关缓冲后转发（假流式）') }], evidence: { ttfbMs: 820, totalMs: 838, chunkSpanMs: 18, distinctArrivalGroups: 2, bufferedByGateway: true } },
+                    { id: 'max_tokens', name: t('max_tokens 透传'), status: 'fail', issues: [{ level: 'fail', message: t('设置 max_tokens=16，实际返回 34 tokens，参数疑似被忽略') }], evidence: { httpStatus: 200, requested: 16, actualTokens: 34 } },
+                    { id: 'tools', name: t('工具调用'), status: 'pass', issues: [], evidence: { httpStatus: 200, toolName: 'get_weather', args: { city: 'Beijing' }, argsValidJson: true } },
+                    { id: 'tokens', name: t('Token 计数一致性'), status: 'warn', issues: [{ level: 'warn', message: t('输入 20 tokens 与本地估算 18 偏差 11.1%') }, { level: 'warn', message: t('completion_tokens 166 中 reasoning_tokens 163，正文仅 2 字符') }], evidence: { httpStatus: 200, inputTokens: 20, outputTokens: 166, totalTokens: 186, deviationPct: 11.1, totalConsistent: true } },
+                    { id: 'vision', name: t('多模态图片输入'), status: 'pass', issues: [], evidence: { httpStatus: 200, mediaType: 'image/png', source: 'url', output: '一张红色方块的图片' } },
+                ];
+                return {
+                    id: 'qr_sample',
+                    createdAt: new Date().toISOString(),
+                    target: { protocol: 'openai', url: 'https://aitoken.example.com', modelName: 'glm-5.3' },
+                    baseline: null,
+                    summary: { total: 8, pass: 5, warn: 2, fail: 1, skip: 0, score: 75, durationMs: 42300 },
+                    usage: { promptTokens: 292, completionTokens: 166, totalTokens: 458, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 163, cacheHitRate: 0, requests: 8 },
+                    capabilities: [
+                        { name: t('思考强度 reasoning_effort=low'), supported: true, detail: 'HTTP 200 · usage.reasoning_tokens=163' },
+                        { name: t('图片输入 image_url'), supported: true, detail: t('HTTP 200 · 正常返回图片描述') },
+                        { name: t('视频输入 video_url'), supported: null, detail: t('未选择该检查项') },
+                        { name: t('联网搜索 web_search'), supported: null, detail: t('未选择该检查项') },
+                        { name: t('结构化输出 json_schema'), supported: null, detail: t('未选择该检查项') },
+                    ],
+                    differences: [],
+                    checks,
+                    conclusion: t('共 8 项检查：通过 5、警告 2、失败 1，综合得分 75。本次未提供官方对照，差异结论基于协议规范判断。这份是示例报告，仅用于查看版式，不代表真实测试结果。'),
+                };
+            }
+
+            function loadSample() {
+                if (running) return;
+                currentReport = buildSampleReport();
+                renderReport(currentReport);
+                setStatus(t('示例报告（假数据，未发起请求、未写入历史）'));
+            }
+
+            /* ---------------- 导出 Markdown ---------------- */
+            function mdCell(v) {
+                return String(v == null ? '' : v).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+            }
+
+            function buildMarkdown() {
+                const r = currentReport;
+                const s = r.summary || {};
+                const u = r.usage;
+                const caps = r.capabilities || [];
+                const checks = r.checks || [];
+                const lines = [];
+
+                const endpoint = resolvePreviewUrl(r.target.url, r.target.protocol);
+                const protocolName = { openai: t('OpenAI 兼容（/v1/chat/completions）'), responses: t('OpenAI Responses（/v1/responses）'), anthropic: t('Anthropic Messages（/v1/messages）') }[r.target.protocol] || r.target.protocol;
+
+                lines.push('# ' + t('模型质量验证报告'));
+                lines.push('');
+                lines.push('- ' + t('生成时间：') + new Date(r.createdAt).toLocaleString());
+                lines.push('- ' + t('被测接口：') + r.target.url);
+                lines.push('- ' + t('实际请求端点：') + endpoint);
+                lines.push('- ' + t('接口协议：') + protocolName);
+                lines.push('- ' + t('被测模型：') + r.target.modelName);
+                lines.push('- ' + t('官方对照：') + (r.baseline ? `${r.baseline.url}${LP}${r.baseline.modelName}${COMMA}${r.baseline.protocol}${RP}` : t('未启用（下方对比按协议规范判定）')));
+                lines.push(`- ${t('综合得分：')}${s.score} / 100`);
+                lines.push('');
+                lines.push('## ' + t('总体情况'));
+                lines.push('');
+                lines.push(`- ${t('检查项')} ${s.total || checks.length} ${t('项：通过')} ${s.pass || 0}${t('、警告')} ${s.warn || 0}${t('、失败')} ${s.fail || 0}${t('、未测')} ${s.skip || 0}`);
+                lines.push(`- ${t('总耗时：')}${Math.round((s.durationMs || 0) / 100) / 10} ${t('秒')}`);
+                if (u) {
+                    lines.push(`- ${t('Token 用量：输入')} ${u.promptTokens}${t('、输出')} ${u.completionTokens}${t('（其中思考')} ${u.reasoningTokens || 0}${t('、缓存命中')} ${u.cachedTokens || 0}${t('，命中率')} ${u.cacheHitRate == null ? '-' : u.cacheHitRate + '%'}${t('），合计')} ${u.totalTokens}${t('，共')} ${u.requests || '-'} ${t('次请求')}`);
+                }
+                if (caps.length) {
+                    const sup = caps.filter((c) => c.supported === true).length;
+                    const unsup = caps.filter((c) => c.supported === false).length;
+                    const untested = caps.filter((c) => c.supported == null).length;
+                    lines.push(`- ${t('能力支持：支持')} ${sup} ${t('项、不支持')} ${unsup} ${t('项、未测')} ${untested} ${t('项')}`);
+                }
+                lines.push('');
+                lines.push(t('**结论**：') + r.conclusion);
+                lines.push('');
+
+                const problems = [];
+                for (const c of checks) {
+                    for (const it of (c.issues || [])) {
+                        if (it.level === 'fail' || it.level === 'warn') problems.push(`[${it.level === 'fail' ? t('失败') : t('警告')}] ${c.name}${COLON}${it.message}`);
+                    }
+                }
+                if (problems.length) {
+                    lines.push(t('**主要问题**：'));
+                    lines.push('');
+                    problems.slice(0, 8).forEach((p, i) => lines.push(`${i + 1}. ${p}`));
+                    if (problems.length > 8) lines.push(`- ${t('其余')} ${problems.length - 8} ${t('条告警/失败见文末逐项结果')}`);
+                    lines.push('');
+                } else {
+                    lines.push(t('**主要问题**：无，全部检查项通过。'));
+                    lines.push('');
+                }
+
+                lines.push('## ' + t('检查项支持情况对比'));
+                lines.push('');
+                lines.push(t('| # | 检查项 | 验证目标 | 官方/规范 | 当前接口 | 结论 |'));
+                lines.push('| --- | --- | --- | --- | --- | --- |');
+                checks.forEach((c, i) => {
+                    const meta = (CATALOG || []).find((x) => x.id === c.id) || {};
+                    const goal = mdCell(meta.desc || c.desc || '-');
+                    let official;
+                    if (r.baseline && c.baselineStatus) {
+                        official = t('实测官方：') + (SUPPORT_LABEL[c.baselineStatus] || c.baselineStatus);
+                    } else {
+                        official = meta.optional ? t('可选能力（未对照）') : t('规范要求支持');
+                    }
+                    const actual = SUPPORT_LABEL[c.status] || c.status || '-';
+                    let verdict;
+                    if (r.baseline && Array.isArray(c.differences)) {
+                        verdict = c.differences.length ? `${c.differences.length} ${t('处差异')}` : t('一致');
+                    } else {
+                        verdict = VERDICT_LABEL[c.status] || '-';
+                    }
+                    lines.push(`| ${i + 1} | ${mdCell(c.name)} | ${goal} | ${official} | ${actual} | ${verdict} |`);
+                });
+                lines.push('');
+
+                if (caps.length) {
+                    lines.push('## ' + t('能力支持情况'));
+                    lines.push('');
+                    lines.push(t('| 能力 / 参数 | 支持情况 | 依据（状态码 / 原始报错） |'));
+                    lines.push('| --- | --- | --- |');
+                    for (const c of caps) {
+                        const label = c.supported === true ? t('支持') : c.supported === false ? t('不支持') : t('未测');
+                        lines.push(`| ${mdCell(c.name)} | ${label} | ${mdCell(c.detail || '-')} |`);
+                    }
+                    lines.push('');
+                }
+
+                if (r.differences && r.differences.length) {
+                    lines.push('## ' + t('官方 vs 当前接口 差异明细'));
+                    lines.push('');
+                    lines.push(t('| 检查项 | 字段路径 | 官方 | 当前接口 | 类型 |'));
+                    lines.push('| --- | --- | --- | --- | --- |');
+                    for (const d of r.differences) {
+                        lines.push(`| ${mdCell(d.checkName)} | ${mdCell(d.path)} | ${mdCell(fmt(d.official))} | ${mdCell(fmt(d.local))} | ${mdCell(d.type)} |`);
+                    }
+                    lines.push('');
+                }
+
+                lines.push('## ' + t('逐项结果'));
+                lines.push('');
+                for (const c of checks) {
+                    lines.push(`### ${c.name} — ${STATUS_LABEL[c.status] || c.status}`);
+                    lines.push('');
+                    if (c.issues && c.issues.length) {
+                        for (const it of c.issues) lines.push('- [' + it.level + '] ' + it.message);
+                    } else {
+                        lines.push('- ' + t('无异常'));
+                    }
+                    lines.push('');
+                    lines.push('```json');
+                    lines.push(JSON.stringify(c.evidence, null, 2));
+                    lines.push('```');
+                    lines.push('');
+                    if (c.baselineEvidence) {
+                        lines.push('<details><summary>' + t('官方对照观测值') + '</summary>');
+                        lines.push('');
+                        lines.push('```json');
+                        lines.push(JSON.stringify(c.baselineEvidence, null, 2));
+                        lines.push('```');
+                        lines.push('');
+                        lines.push('</details>');
+                        lines.push('');
+                    }
+                }
+                lines.push('---');
+                lines.push('');
+                lines.push(`${t('本报告由 LLM-API-Eval 自动生成 · 报告 ID：')}${r.id}`);
+                return lines.join('\n');
+            }
+
+            function exportMarkdown() {
+                if (!currentReport) return;
+                const md = buildMarkdown();
+                const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `quality-report-${currentReport.id}.md`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            }
+
+            /* ---------------- 等价 curl 预览 ---------------- */
+            function resolvePreviewUrl(rawUrl, protocol) {
+                let base = String(rawUrl || '').trim().replace(/\/+$/, '');
+                if (!base) base = 'https://api.example.com';
+                const suffix = protocol === 'anthropic' ? '/messages' : protocol === 'responses' ? '/responses' : '/chat/completions';
+                if (/\/(chat\/completions|messages|responses)$/i.test(base)) return base;
+                if (/\/v1$/i.test(base)) return base + suffix;
+                return base + '/v1' + suffix;
+            }
+
+            function currentConfig() {
+                const protocol = document.getElementById('protocol').value;
+                return {
+                    protocol,
+                    url: resolvePreviewUrl(document.getElementById('url').value, protocol),
+                    modelName: document.getElementById('modelName').value.trim() || 'glm-5.3',
+                    effort: document.getElementById('reasoningEffort').value,
+                };
+            }
+
+            /** 把「统一写法」的 body 按协议重排（messages/max_tokens/思考参数） */
+            function applyProtocolShape(cfg, base) {
+                const extra = {};
+                Object.keys(base).forEach((k) => {
+                    if (k !== 'messages' && k !== 'max_tokens') extra[k] = base[k];
+                });
+                const out = { model: cfg.modelName };
+
+                if (cfg.protocol === 'anthropic') {
+                    const sys = base.messages.find((m) => m.role === 'system');
+                    out.messages = base.messages
+                        .filter((m) => m.role !== 'system')
+                        .map((m) => ({ role: m.role, content: typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content }));
+                    if (sys) out.system = sys.content;
+                    if (base.max_tokens) out.max_tokens = base.max_tokens;
+                    return Object.assign(out, extra);
+                }
+
+                if (cfg.protocol === 'responses') {
+                    out.input = base.messages.map((m) => ({
+                        role: m.role,
+                        content: typeof m.content === 'string'
+                            ? [{ type: 'input_text', text: m.content }]
+                            : m.content.map((c) => (c.type === 'text' ? { type: 'input_text', text: c.text } : c)),
+                    }));
+                    if (base.max_tokens) out.max_output_tokens = base.max_tokens;
+                    if (cfg.effort) out.reasoning = { effort: cfg.effort };
+                    return Object.assign(out, extra);
+                }
+
+                out.messages = base.messages;
+                if (base.max_tokens) out.max_tokens = base.max_tokens;
+                // 不做厂商适配：用户选了什么就原样下发，模型不认这个字段会直接报错
+                if (cfg.effort) out.reasoning_effort = cfg.effort;
+                return Object.assign(out, extra);
+            }
+
+            function mediaUrlOf(kind) {
+                const m = MEDIA[kind];
+                if (m) {
+                    const mime = kind === 'image' ? 'image/png' : 'video/mp4';
+                    return `data:${mime};base64,${t('<本地文件')} ${m.name} ${t('内联>')}`;
+                }
+                const inputId = kind === 'image' ? 'imageUrl' : 'videoUrl';
+                return document.getElementById(inputId).value.trim() || (kind === 'image' ? DEFAULT_IMAGE_URL : DEFAULT_VIDEO_URL);
+            }
+
+            /** 各厂商联网搜索工具的真实写法（选中即填入输入框，后续按原样下发） */
+            const SEARCH_PRESETS = {
+                zhipu: [{ type: 'web_search', web_search: { enable: true, search_engine: 'search_pro', search_result: true, count: 5 } }],
+                kimi: [{ type: 'builtin_function', function: { name: '$web_search' } }],
+                openai: [{ type: 'web_search_preview' }],
+                responses: [{ type: 'web_search' }],
+                anthropic: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }],
+            };
+
+            function applySearchPreset() {
+                const key = document.getElementById('searchPreset').value;
+                document.getElementById('searchTools').value = SEARCH_PRESETS[key] ? JSON.stringify(SEARCH_PRESETS[key]) : '';
+                renderCurl();
+            }
+
+            /** 联网搜索 tools：优先用用户自定义 JSON，否则按协议给默认值（不猜厂商） */
+            function searchToolOf(cfg) {
+                const custom = document.getElementById('searchTools').value.trim();
+                if (custom) {
+                    try {
+                        const parsed = JSON.parse(custom);
+                        return Array.isArray(parsed) ? parsed : [parsed];
+                    } catch (e) {
+                        return [{ type: 'web_search_preview' }];
+                    }
+                }
+                if (cfg.protocol === 'anthropic') return [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }];
+                if (cfg.protocol === 'responses') return [{ type: 'web_search' }];
+                return [{ type: 'web_search_preview' }];
+            }
+
+            /** 每个检查项对应的请求；返回 { base } 需再按协议重排，或 { body } 已成形，或 { note } 无请求 */
+            function buildCheckRequest(id, cfg) {
+                const ask = (text, extra) => Object.assign({ messages: [{ role: 'user', content: text }] }, extra || {});
+                switch (id) {
+                    case 'connectivity':
+                        return { base: ask('请只回复 OK 两个字母。', { max_tokens: 512, temperature: 0 }) };
+                    case 'schema':
+                        return { note: t('复用连通性响应，不额外发请求：本地按协议规范核对字段齐全性与类型') };
+                    case 'stream':
+                        return { base: ask('用一句话介绍 HTTP/2 的多路复用。', { max_tokens: 256, stream: true, temperature: 0 }) };
+                    case 'streaming':
+                        return { note: t('复用流式响应：按首帧/末帧间隔与 chunk 分布判定是否被网关缓冲成假流式') };
+                    case 'max_tokens':
+                        return { base: ask('写一段 300 字的产品介绍。', { max_tokens: 16, temperature: 0 }) };
+                    case 'stop':
+                        return { base: ask('列出 5 种水果，每行一个。', { max_tokens: 96, stop: ['\n'], temperature: 0 }) };
+                    case 'quality':
+                        return { base: ask('计算 391 * 7，只输出数字。', { max_tokens: 256, temperature: 0 }) };
+                    case 'tokens':
+                        return { base: ask('把这句话翻译成英文：质量测试需要可复现。', { max_tokens: 128, temperature: 0 }) };
+                    case 'cache':
+                        return { base: ask('请只回复 OK。', { max_tokens: 128, temperature: 0 }), note: t('其余 2 次请求同体，仅 system 长前缀完全一致（连发 3 次；DeepSeek 第 3 次才命中）') };
+                    case 'system':
+                        return { base: { messages: [{ role: 'system', content: '你只能用中文回答。' }, { role: 'user', content: 'Say hi' }], max_tokens: 128, temperature: 0 } };
+                    case 'errors':
+                        return { base: ask('hi', { max_tokens: 16 }), overrideModel: 'model-not-exist-test' };
+                    case 'tools': {
+                        const params = { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] };
+                        if (cfg.protocol === 'anthropic') {
+                            return { body: applyProtocolShape(cfg, { messages: [{ role: 'user', content: '北京今天天气怎么样？' }], max_tokens: 256, tools: [{ name: 'get_weather', description: '查询城市天气', input_schema: params }] }) };
+                        }
+                        return { base: ask('北京今天天气怎么样？', { max_tokens: 256, temperature: 0, tools: [{ type: 'function', function: { name: 'get_weather', description: '查询城市天气', parameters: params } }], tool_choice: 'auto' }) };
+                    }
+                    case 'json': {
+                        const schema = { type: 'object', properties: { name: { type: 'string' }, age: { type: 'integer' } }, required: ['name', 'age'], additionalProperties: false };
+                        if (cfg.protocol === 'anthropic') {
+                            return { body: applyProtocolShape(cfg, { messages: [{ role: 'user', content: '抽取：张三今年 36 岁。' }], max_tokens: 256, tools: [{ name: 'emit', description: '输出结构化结果', input_schema: schema }], tool_choice: { type: 'tool', name: 'emit' } }) };
+                        }
+                        if (cfg.protocol === 'responses') {
+                            return { body: applyProtocolShape(cfg, { messages: [{ role: 'user', content: '抽取：张三今年 36 岁。' }], max_tokens: 256, text: { format: { type: 'json_schema', name: 'person', schema, strict: true } } }) };
+                        }
+                        return { base: ask('抽取：张三今年 36 岁。', { max_tokens: 256, temperature: 0, response_format: { type: 'json_schema', json_schema: { name: 'person', schema, strict: true } } }) };
+                    }
+                    case 'vision': {
+                        const u = mediaUrlOf('image');
+                        if (cfg.protocol === 'anthropic') return { body: { model: cfg.modelName, max_tokens: 256, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: u } }, { type: 'text', text: '描述这张图片，20 字以内。' }] }] } };
+                        if (cfg.protocol === 'responses') return { body: { model: cfg.modelName, max_output_tokens: 256, input: [{ role: 'user', content: [{ type: 'input_text', text: '描述这张图片，20 字以内。' }, { type: 'input_image', image_url: u }] }] } };
+                        return { body: { model: cfg.modelName, max_tokens: 256, messages: [{ role: 'user', content: [{ type: 'text', text: '描述这张图片，20 字以内。' }, { type: 'image_url', image_url: { url: u } }] }] } };
+                    }
+                    case 'video': {
+                        const u = mediaUrlOf('video');
+                        const fps = document.getElementById('videoFps').value.trim();
+                        const fpsField = fps ? { fps: Number(fps) } : {};
+                        if (cfg.protocol === 'anthropic') return { note: t('Anthropic Messages 协议未定义视频内容块，该项会直接跳过') };
+                        if (cfg.protocol === 'responses') return { body: { model: cfg.modelName, max_output_tokens: 256, input: [{ role: 'user', content: [{ type: 'input_text', text: '描述这个视频的内容，20 字以内。' }, Object.assign({ type: 'input_video', video_url: u }, fpsField)] }] } };
+                        return { body: { model: cfg.modelName, max_tokens: 256, messages: [{ role: 'user', content: [{ type: 'text', text: '描述这个视频的内容，20 字以内。' }, Object.assign({ type: 'video_url', video_url: { url: u } }, fpsField)] }] } };
+                    }
+                    case 'web_search':
+                        return { base: ask('2026 年 7 月的重要财经事件有哪些？请按重要性排序并注明来源日期。', { max_tokens: 512, temperature: 0, tools: searchToolOf(cfg) }), note: t('联网搜索会显著抬高输入 tokens（智谱实测单次约 12k），注意计费') };
+                    default:
+                        return { note: t('无请求模板') };
+                }
+            }
+
+            function toCurl(url, body) {
+                return `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -H 'Authorization: Bearer $API_KEY' \\\n  -d '${JSON.stringify(body)}'`;
+            }
+
+            function renderCurl() {
+                const box = document.getElementById('curlList');
+                if (!box) return;
+                const cfg = currentConfig();
+                const ids = [...document.querySelectorAll('#checksGrid input:checked')].map((el) => el.value);
+                if (!ids.length) {
+                    box.innerHTML = '<div class="muted">' + t('未选择检查项') + '</div>';
+                    return;
+                }
+                const order = CATALOG.map((c) => c.id);
+                ids.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+
+                box.innerHTML = ids.map((id, i) => {
+                    const meta = CATALOG.find((c) => c.id === id) || { id, name: id };
+                    const req = buildCheckRequest(id, cfg);
+                    let pre;
+                    if (req.note && !req.base && !req.body) {
+                        pre = `<div class="curl-note">${esc(req.note)}</div>`;
+                    } else {
+                        const body = req.body || applyProtocolShape(cfg, req.base);
+                        if (req.overrideModel) body.model = req.overrideModel;
+                        pre = `<pre class="evidence" style="margin-top:0">${esc(toCurl(cfg.url, body))}</pre>`;
+                        if (req.note) pre += `<div class="curl-note">${esc(req.note)}</div>`;
+                    }
+                    return `<div class="curl-item"><div class="curl-head"><span class="badge accent">${i + 1}</span>${esc(meta.name)}</div>${pre}</div>`;
+                }).join('');
+            }
+
+            /* ---------------- 表单记忆：保留上一轮的接口 / 密钥 / 模型 ---------------- */
+            const FORM_CONFIG_KEY = 'llm_eval_quality_config';
+            const FORM_FIELDS = [
+                'protocol', 'url', 'apiKey', 'modelName', 'reasoningEffort',
+                'baseProtocol', 'baseUrl', 'baseApiKey', 'baseModel',
+                'searchPreset', 'searchTools',
+                'imageUrl', 'videoUrl', 'videoFps',
+            ];
+
+            function saveFormConfig() {
+                try {
+                    const cfg = {};
+                    for (const id of FORM_FIELDS) {
+                        const el = document.getElementById(id);
+                        if (el) cfg[id] = el.value;
+                    }
+                    localStorage.setItem(FORM_CONFIG_KEY, JSON.stringify(cfg));
+                } catch (e) { /* 隐私模式或配额受限时忽略 */ }
+            }
+
+            function loadFormConfig() {
+                try {
+                    const raw = localStorage.getItem(FORM_CONFIG_KEY);
+                    if (!raw) return false;
+                    const cfg = JSON.parse(raw);
+                    for (const id of FORM_FIELDS) {
+                        const el = document.getElementById(id);
+                        if (el && typeof cfg[id] === 'string') el.value = cfg[id];
+                    }
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            /* ---------------- 初始化 ---------------- */
+            const MODEL_PLACEHOLDERS = { anthropic: 'claude-3-5-sonnet', responses: 'gpt-4o / o3', openai: 'gpt-4o-mini' };
+            function bindProtocolPlaceholder(selectId, inputId) {
+                const select = document.getElementById(selectId);
+                const input = document.getElementById(inputId);
+                const sync = () => { input.placeholder = MODEL_PLACEHOLDERS[select.value] || 'gpt-4o-mini'; };
+                select.addEventListener('change', sync);
+                sync();
+            }
+
+            bindProtocolPlaceholder('protocol', 'modelName');
+            bindProtocolPlaceholder('baseProtocol', 'baseModel');
+
+            bindUpload('image');
+            bindUpload('video');
+            document.getElementById('imageUrl').value = DEFAULT_IMAGE_URL;
+            document.getElementById('videoUrl').value = DEFAULT_VIDEO_URL;
+            document.getElementById('videoFps').value = '1';
+
+            // 恢复上一次用过的接口地址、密钥、模型与参数
+            if (loadFormConfig()) {
+                ['protocol', 'baseProtocol'].forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el) el.dispatchEvent(new Event('change'));
+                });
+            }
+
+            // 改动即记忆，避免切换页面后重新填一遍
+            FORM_FIELDS.forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('change', saveFormConfig);
+                el.addEventListener('blur', saveFormConfig);
+            });
+
+            document.getElementById('runBtn').addEventListener('click', runTest);
+            document.getElementById('sampleBtn').addEventListener('click', loadSample);
+            document.getElementById('exportBtn').addEventListener('click', exportMarkdown);
+            document.getElementById('clearBtn').addEventListener('click', clearReports);
+            document.getElementById('searchPreset').addEventListener('change', applySearchPreset);
+            document.getElementById('checksGrid').addEventListener('change', renderCurl);
+            ['url', 'apiKey', 'modelName', 'protocol', 'reasoningEffort', 'imageUrl', 'videoUrl', 'videoFps', 'searchTools'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('input', renderCurl);
+                el.addEventListener('change', renderCurl);
+            });
+
+            loadChecks().then(renderCurl);
+            loadHistory();
+            resumeJob();
+            renderCurl();
+
+            // 支持从历史记录页深链打开某份报告：/quality?report=qr_xxx
+            const deepReportId = new URLSearchParams(window.location.search).get('report');
+            if (deepReportId) openReport(deepReportId);
+        });
+    })();
+    </script>
+</body>
+</html>
