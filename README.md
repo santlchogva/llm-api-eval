@@ -8,6 +8,19 @@
 
 A stress-testing and evaluation platform for LLM APIs. Configure the target endpoint (Base URL / API Key / model name) in a web console, and run RPM / TPM load tests, model quality assessments, and token-level speed tests against four API protocols: OpenAI, OpenAI Responses, Anthropic, and Gemini. Monitor success rate, latency percentiles, time-to-first-byte (TTFB), and time-per-output-token (TPOT) in real time, with test history, A/B regression comparison, cost estimation, report export, parallel comparison tests, and scheduled jobs.
 
+## Screenshots
+
+**Load Test Console** — six load modes, live metrics, cost estimation, and a one-click connectivity pre-check
+
+![Load Test Console](docs/screenshots/dashboard.png)
+
+**Parallel Load Test** — up to 5 configurations racing side by side, and **Quality Test** — dual-run blind scoring
+
+<p align="center">
+  <img src="docs/screenshots/parallel.png" width="49%" alt="Parallel Load Test">
+  <img src="docs/screenshots/quality.png" width="49%" alt="Quality Test">
+</p>
+
 ## Features
 
 ### Stress Testing

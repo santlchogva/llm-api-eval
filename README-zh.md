@@ -8,6 +8,19 @@
 
 大模型 API 压测与评估平台。通过 Web 控制台配置被测接口（Base URL / API Key / 模型名），支持 OpenAI、OpenAI Responses、Anthropic、Gemini 四种接口协议，对大模型 API 做 RPM / TPM 压力测试、模型质量评估与解码测速，实时监控成功率、延迟分位数、首字节延迟（TTFB）、每输出 token 耗时（TPOT）等指标，并提供历史记录、A/B 回归对比、成本估算、报告导出、并行对比测试与定时任务。
 
+## 界面预览
+
+**压测控制台** — 六种加压模式、实时指标、成本估算与一键连通性预检
+
+![压测控制台](docs/screenshots/dashboard.png)
+
+**并行对比压测** — 最多 5 组配置同屏竞速 · **模型质量评估** — 双份对照盲评
+
+<p align="center">
+  <img src="docs/screenshots/parallel.png" width="49%" alt="并行对比压测">
+  <img src="docs/screenshots/quality.png" width="49%" alt="模型质量评估">
+</p>
+
 ## 功能总览
 
 ### 压力测试
