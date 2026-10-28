@@ -10,15 +10,15 @@ A stress-testing and evaluation platform for LLM APIs. Configure the target endp
 
 ## Screenshots
 
-**Load Test Console** — six load modes, live metrics, cost estimation, and a one-click connectivity pre-check
+**Target & Load Model Configuration** — four API protocols, four test goals, and six load models, all in one console
 
-![Load Test Console](docs/screenshots/dashboard.png)
+![Target & Load Model Configuration](docs/screenshots/dashboard.png)
 
-**Parallel Load Test** — up to 5 configurations racing side by side, and **Quality Test** — dual-run blind scoring
+**Parallel Load Test** — up to 5 configurations racing side by side, and **Quality Checks** — 16 capability checks in one grid
 
 <p align="center">
   <img src="docs/screenshots/parallel.png" width="49%" alt="Parallel Load Test">
-  <img src="docs/screenshots/quality.png" width="49%" alt="Quality Test">
+  <img src="docs/screenshots/quality.png" width="49%" alt="Quality Checks">
 </p>
 
 ## Features
