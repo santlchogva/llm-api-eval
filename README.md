@@ -133,6 +133,7 @@ The database and logs are persisted via volume mounts at `./data` and `./logs`.
 | `DEFAULT_PROBE_TPM_DATASET` | `short-in-long-out` | Dataset used by the probe's TPM round |
 | `TOKEN_EXPIRY` | `86400` | Login token lifetime (seconds) |
 | `RATE_LIMIT_MAX` | `100` | API rate limit: max requests per window |
+| `PDF_FONT_PATH` | *(auto-detect)* | Optional. TTF/TTC font used by PDF report export. Auto-detects system CJK fonts (Microsoft YaHei, Noto CJK, PingFang). For TTC collections use `path\|face`, e.g. `/usr/share/fonts/xxx.ttc\|NotoSansCJKsc-Regular` |
 | `RATE_LIMIT_WINDOW` | `1` | API rate-limit window (minutes) |
 | `CORS_ORIGIN` | `*` | Allowed CORS origins |
 | `WS_HEARTBEAT_INTERVAL` | `30000` | WebSocket heartbeat interval (ms) |

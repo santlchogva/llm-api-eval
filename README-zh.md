@@ -133,6 +133,7 @@ docker compose up -d
 | `DEFAULT_PROBE_TPM_DATASET` | `short-in-long-out` | 能力探测 TPM 阶段使用的数据集 |
 | `TOKEN_EXPIRY` | `86400` | 登录令牌有效期（秒） |
 | `RATE_LIMIT_MAX` | `100` | API 限流：每时间窗口最大请求数 |
+| `PDF_FONT_PATH` | 自动探测 | 可选。PDF 报告导出使用的中文字体路径。默认自动探测系统中文字体（Windows 雅黑/黑体、Linux Noto CJK、macOS 苹方）；TTC 集合字体用「路径\|face名」格式，如 `/usr/share/fonts/xxx.ttc\|NotoSansCJKsc-Regular` |
 | `RATE_LIMIT_WINDOW` | `1` | API 限流时间窗口（分钟） |
 | `CORS_ORIGIN` | `*` | CORS 允许的源 |
 | `WS_HEARTBEAT_INTERVAL` | `30000` | WebSocket 心跳间隔（ms） |

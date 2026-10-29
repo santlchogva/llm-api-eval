@@ -19,8 +19,8 @@ RUN npm ci --omit=dev
 # ===================================
 FROM node:20-alpine
 
-# 安装运行时依赖
-RUN apk add --no-cache sqlite dumb-init
+# 安装运行时依赖（含中文字体，PDF 报告导出需要）
+RUN apk add --no-cache sqlite dumb-init font-noto-cjk
 
 WORKDIR /app
 

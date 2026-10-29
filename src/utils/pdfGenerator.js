@@ -4,6 +4,45 @@
  */
 
 const PDFDocument = require('pdfkit');
+const fs = require('fs');
+
+/**
+ * 中文字体候选列表（按顺序探测，取第一个存在的）
+ * pdfkit 默认 Helvetica 不含中文字形，必须注册 TTF/TTC 中文字体，否则中文全部乱码。
+ * TTC 集合字体需指定 face 的 postscriptname；单文件 TTF face 置 null 即可。
+ * 可通过环境变量 PDF_FONT_PATH 强制指定字体文件路径（TTC 时用「路径|face名」格式，如 xxx.ttc|MicrosoftYaHei）。
+ */
+const CJK_FONT_CANDIDATES = [
+  process.env.PDF_FONT_PATH,
+  { path: 'C:/Windows/Fonts/msyh.ttc', face: 'MicrosoftYaHei' },   // Windows 微软雅黑
+  { path: 'C:/Windows/Fonts/simhei.ttf', face: null },             // Windows 黑体
+  { path: 'C:/Windows/Fonts/simsun.ttc', face: 'SimSun' },         // Windows 宋体
+  { path: '/usr/share/fonts/noto/NotoSansCJK-Regular.ttc', face: 'NotoSansCJKsc-Regular' },          // Alpine (font-noto-cjk)
+  { path: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', face: 'NotoSansCJKsc-Regular' }, // Debian/Ubuntu (fonts-noto-cjk)
+  { path: '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc', face: 'WenQuanYiMicroHei' },             // 文泉驿微米黑
+  { path: '/System/Library/Fonts/PingFang.ttc', face: 'PingFangSC-Regular' },                        // macOS 苹方
+];
+
+function findChineseFont() {
+  for (const c of CJK_FONT_CANDIDATES) {
+    try {
+      if (!c) continue;
+      let fontPath;
+      let face;
+      if (typeof c === 'string') {
+        // 字符串格式：路径 或 「路径|face名」
+        const parts = c.split('|');
+        fontPath = parts[0];
+        face = parts[1] || null;
+      } else {
+        fontPath = c.path;
+        face = c.face;
+      }
+      if (fontPath && fs.existsSync(fontPath)) return { path: fontPath, face };
+    } catch (e) { /* 忽略探测异常，继续下一个候选 */ }
+  }
+  return null;
+}
 
 class PDFGenerator {
   /**
@@ -15,6 +54,19 @@ class PDFGenerator {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ margin: 50 });
+
+        // 注册中文字体（Helvetica 不含中文字形，不注册会乱码）
+        const cjkFont = findChineseFont();
+        if (cjkFont) {
+          if (cjkFont.face) {
+            doc.font(cjkFont.path, cjkFont.face);
+          } else {
+            doc.font(cjkFont.path);
+          }
+        } else {
+          console.warn('[pdfGenerator] 未找到可用的中文字体，中文可能显示异常。可通过环境变量 PDF_FONT_PATH 指定 TTF/TTC 字体文件');
+        }
+
         const chunks = [];
 
         doc.on('data', chunk => chunks.push(chunk));
