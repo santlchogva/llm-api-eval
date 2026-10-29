@@ -12,13 +12,13 @@
 
 **目标与加压模式配置** — 四种接口协议、四类测试目标、六种加压模型，一个控制台全部搞定
 
-![目标与加压模式配置](docs/screenshots/dashboard.png)
+![目标与加压模式配置](docs/screenshots/zh/dashboard.png)
 
 **并行对比压测** — 最多 5 组配置同屏竞速 · **质量检查项** — 16 项能力检查一键开测
 
 <p align="center">
-  <img src="docs/screenshots/parallel.png" width="49%" alt="并行对比压测">
-  <img src="docs/screenshots/quality.png" width="49%" alt="质量检查项">
+  <img src="docs/screenshots/zh/parallel.png" width="49%" alt="并行对比压测">
+  <img src="docs/screenshots/zh/quality.png" width="49%" alt="质量检查项">
 </p>
 
 ## 功能总览
