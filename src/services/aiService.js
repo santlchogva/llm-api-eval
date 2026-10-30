@@ -11,10 +11,11 @@ const DEFAULT_TIMEOUT = 150000;
  */
 function mergeUsage(current, incoming) {
   if (!incoming) return current;
-  const base = current || { promptTokens: null, completionTokens: null };
+  const base = current || { promptTokens: null, completionTokens: null, cachedTokens: null };
   return {
     promptTokens: incoming.promptTokens ?? base.promptTokens,
     completionTokens: incoming.completionTokens ?? base.completionTokens,
+    cachedTokens: incoming.cachedTokens ?? base.cachedTokens,
   };
 }
 
@@ -556,6 +557,8 @@ class AIRequestService {
       promptTokens,
       completionTokens,
       totalTokens: promptTokens + completionTokens,
+      // 缓存命中 token 数：仅接口明确返回时才有值（估算无缓存概念）
+      cachedTokens: usage?.cachedTokens ?? null,
       estimated,
     };
   }

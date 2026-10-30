@@ -39,6 +39,7 @@ const transformToReportData = (record) => {
     totalPromptTokens: record.total_prompt_tokens,
     totalCompletionTokens: record.total_completion_tokens,
     totalTokens: record.total_tokens,
+    cachedTokens: record.cached_tokens,
     avgTPM: record.avg_tpm,
     inputTPM: record.input_tpm,
     outputTPM: record.output_tpm,

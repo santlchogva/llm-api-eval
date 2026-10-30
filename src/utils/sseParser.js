@@ -138,6 +138,8 @@ class SSEParser {
         return {
           promptTokens: data.usage.prompt_tokens ?? null,
           completionTokens: data.usage.completion_tokens ?? null,
+          // 命中 prompt cache 的 token 数（OpenAI/DeepSeek/Kimi 等兼容字段）
+          cachedTokens: data.usage.prompt_tokens_details?.cached_tokens ?? null,
         };
       }
 
@@ -149,6 +151,7 @@ class SSEParser {
         return {
           promptTokens: usage.input_tokens ?? null,
           completionTokens: usage.output_tokens ?? null,
+          cachedTokens: usage.input_tokens_details?.cached_tokens ?? null,
         };
       }
 
@@ -160,6 +163,8 @@ class SSEParser {
         return {
           promptTokens: usage.input_tokens ?? null,
           completionTokens: usage.output_tokens ?? null,
+          // Anthropic 的缓存读取 token
+          cachedTokens: usage.cache_read_input_tokens ?? null,
         };
       }
 
@@ -168,6 +173,7 @@ class SSEParser {
         return {
           promptTokens: data.usageMetadata.promptTokenCount ?? null,
           completionTokens: data.usageMetadata.candidatesTokenCount ?? null,
+          cachedTokens: data.usageMetadata.cachedContentTokenCount ?? null,
         };
       }
 

@@ -118,7 +118,7 @@ describe('SSEParser.extractContent', () => {
 describe('SSEParser.extractUsage', () => {
   test('openai usage', () => {
     const u = SSEParser.extractUsage({ usage: { prompt_tokens: 5, completion_tokens: 7 } }, 'openai');
-    expect(u).toEqual({ promptTokens: 5, completionTokens: 7 });
+    expect(u).toEqual({ promptTokens: 5, completionTokens: 7, cachedTokens: null });
   });
 
   test('responses 流式末帧 usage', () => {
@@ -126,19 +126,38 @@ describe('SSEParser.extractUsage', () => {
       { type: 'response.completed', response: { usage: { input_tokens: 3, output_tokens: 4 } } },
       'responses'
     );
-    expect(u).toEqual({ promptTokens: 3, completionTokens: 4 });
+    expect(u).toEqual({ promptTokens: 3, completionTokens: 4, cachedTokens: null });
   });
 
   test('claude message_start / message_delta', () => {
     expect(SSEParser.extractUsage({ message: { usage: { input_tokens: 2, output_tokens: null } } }, 'claude'))
-      .toEqual({ promptTokens: 2, completionTokens: null });
+      .toEqual({ promptTokens: 2, completionTokens: null, cachedTokens: null });
     expect(SSEParser.extractUsage({ usage: { input_tokens: null, output_tokens: 9 } }, 'claude'))
-      .toEqual({ promptTokens: null, completionTokens: 9 });
+      .toEqual({ promptTokens: null, completionTokens: 9, cachedTokens: null });
   });
 
   test('gemini usageMetadata', () => {
     const u = SSEParser.extractUsage({ usageMetadata: { promptTokenCount: 6, candidatesTokenCount: 8 } }, 'gemini');
-    expect(u).toEqual({ promptTokens: 6, completionTokens: 8 });
+    expect(u).toEqual({ promptTokens: 6, completionTokens: 8, cachedTokens: null });
+  });
+
+  test('缓存命中 token：四协议字段映射', () => {
+    expect(SSEParser.extractUsage(
+      { usage: { prompt_tokens: 10, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 8 } } },
+      'openai'
+    )).toEqual({ promptTokens: 10, completionTokens: 1, cachedTokens: 8 });
+    expect(SSEParser.extractUsage(
+      { type: 'response.completed', response: { usage: { input_tokens: 10, output_tokens: 1, input_tokens_details: { cached_tokens: 7 } } } },
+      'responses'
+    ).cachedTokens).toBe(7);
+    expect(SSEParser.extractUsage(
+      { message: { usage: { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 6 } } },
+      'claude'
+    ).cachedTokens).toBe(6);
+    expect(SSEParser.extractUsage(
+      { usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 1, cachedContentTokenCount: 5 } },
+      'gemini'
+    ).cachedTokens).toBe(5);
   });
 
   test('无 usage 返回 null', () => {

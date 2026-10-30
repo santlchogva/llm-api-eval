@@ -148,6 +148,9 @@ class StressTestService {
         totalPromptTokens: 0,
         totalCompletionTokens: 0,
         totalTokens: 0,
+        // 缓存命中 token 数（上游返回 prompt cache 相关字段时累计，0 表示无数据）
+        totalCachedTokens: 0,
+        cacheHitRate: null,
         avgTPM: 0,
         inputTPM: 0,
         outputTPM: 0,
@@ -1250,6 +1253,10 @@ class StressTestService {
       stats.totalPromptTokens += promptTokens;
       stats.totalCompletionTokens += completionTokens;
       stats.totalTokens += totalTokens;
+      // 上游返回缓存命中 token 时累计（失败请求若带 usage 也计入，与 prompt 口径一致）
+      if (tokens.cachedTokens != null) {
+        stats.totalCachedTokens += tokens.cachedTokens;
+      }
       this.testState.currentMinuteStats.promptTokens += promptTokens;
       this.testState.currentMinuteStats.completionTokens += completionTokens;
       this.testState.currentMinuteStats.tokens += totalTokens;
@@ -1566,6 +1573,12 @@ class StressTestService {
       stats.avgTokenSpeed =
         Math.round((stats.totalCompletionTokens / (elapsedMs / 1000)) * 10) / 10;
     }
+
+    // 缓存命中率 = 累计命中 token / 累计输入 token；上游未返回缓存数据时为 null
+    stats.cacheHitRate =
+      stats.totalPromptTokens > 0 && stats.totalCachedTokens > 0
+        ? Math.round((stats.totalCachedTokens / stats.totalPromptTokens) * 10000) / 100
+        : null;
   }
 
   /**
@@ -2508,6 +2521,7 @@ class StressTestService {
         totalPromptTokens: stats.totalPromptTokens,
         totalCompletionTokens: stats.totalCompletionTokens,
         totalTokens: stats.totalTokens,
+        cachedTokens: stats.totalCachedTokens || null,
         avgTPM: stats.avgTPM,
         inputTPM: stats.inputTPM,
         outputTPM: stats.outputTPM,
@@ -2562,6 +2576,7 @@ class StressTestService {
         totalPromptTokens: stats.totalPromptTokens,
         totalCompletionTokens: stats.totalCompletionTokens,
         totalTokens: stats.totalTokens,
+        cachedTokens: stats.totalCachedTokens || null,
         avgTPM: stats.avgTPM,
         inputTPM: stats.inputTPM,
         outputTPM: stats.outputTPM,

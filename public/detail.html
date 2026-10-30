@@ -314,6 +314,10 @@
                 const isRampMode = record.test_mode === 'auto' || record.test_mode === 'seek';
                 const rate = Number(record.success_rate) || 0;
                 const totalTokens = Number(record.total_tokens) || 0;
+                // 缓存命中率（上游返回 prompt cache 用量时才有值）
+                const cacheHitRate = record.cached_tokens != null && Number(record.total_prompt_tokens) > 0
+                    ? Math.round((Number(record.cached_tokens) / Number(record.total_prompt_tokens)) * 10000) / 100
+                    : null;
                 const maxRpm = Number(record.max_rpm) || 0;
                 const maxTpm = Number(record.max_tpm) || 0;
                 const recRpm = Number(record.recommended_rpm) || 0;
@@ -439,6 +443,7 @@
                             ${statCard(t('平均输出 TPM'), fmtInt(record.output_tpm), 'good')}
                             ${statCard(t('累计输入 Token'), fmtInt(record.total_prompt_tokens), 'accent')}
                             ${statCard(t('累计输出 Token'), fmtInt(record.total_completion_tokens), 'accent')}
+                            ${cacheHitRate != null ? statCard(t('缓存命中率'), `${cacheHitRate}%`, cacheHitRate >= 80 ? 'good' : 'warn', `${t('命中')} ${fmtInt(record.cached_tokens)} / ${fmtInt(record.total_prompt_tokens)}`) : ''}
                         </div>
                     </div>` : ''}
 

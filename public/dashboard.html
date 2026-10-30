@@ -723,6 +723,7 @@
                     <div class="stat-card"><div class="stat-label">输入 TPM（实时）</div><div class="stat-value" id="stInTpm">0</div></div>
                     <div class="stat-card"><div class="stat-label">输出 TPM（实时）</div><div class="stat-value" id="stOutTpm">0</div></div>
                     <div class="stat-card good"><div class="stat-label">平均生成速度</div><div class="stat-value" id="stTokSpeed">0</div><div class="stat-foot">tok/s</div></div>
+                    <div class="stat-card" id="stCacheCard" style="display:none"><div class="stat-label">缓存命中率</div><div class="stat-value" id="stCacheHit">-</div><div class="stat-foot" id="stCacheFoot"></div></div>
                     <div class="stat-card accent"><div class="stat-label">本分钟请求数</div><div class="stat-value" id="mTotal">0</div></div>
                     <div class="stat-card"><div class="stat-label">本分钟 Token</div><div class="stat-value" id="mTokens">0</div></div>
                     <div class="stat-card good"><div class="stat-label">本分钟成功率</div><div class="stat-value" id="mSuccess">100%</div><div class="stat-foot" id="mFail">失败率 0%</div></div>
@@ -1726,6 +1727,16 @@
         el('stInTpm').textContent = fmtInt(stats.inputTPM || 0);
         el('stOutTpm').textContent = fmtInt(stats.outputTPM || 0);
         el('stTokSpeed').textContent = fmtInt(stats.avgTokenSpeed || 0);
+        // 缓存命中率（仅上游返回 prompt cache 用量时展示）
+        const cacheCard = el('stCacheCard');
+        if (stats.cacheHitRate != null) {
+            cacheCard.style.display = '';
+            el('stCacheHit').textContent = `${stats.cacheHitRate}%`;
+            cacheCard.className = `stat-card ${stats.cacheHitRate >= 80 ? 'good' : 'warn'}`;
+            el('stCacheFoot').textContent = `命中 ${fmtTokens(stats.totalCachedTokens || 0)} / 输入 ${fmtTokens(stats.totalPromptTokens || 0)}`;
+        } else {
+            cacheCard.style.display = 'none';
+        }
 
         // 日志与错误
         hydrateLogs(state);

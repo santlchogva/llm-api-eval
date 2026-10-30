@@ -183,6 +183,8 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_quality_created ON quality_reports(creat
     ['estimated_cost', 'REAL'],
     ['input_price', 'REAL DEFAULT 0'],
     ['output_price', 'REAL DEFAULT 0'],
+    // 缓存命中 token 数（上游返回 prompt cache 字段时累计，NULL 表示无数据）
+    ['cached_tokens', 'INTEGER'],
   ];
   extraColumns.forEach(([name, type]) => {
     if (!columns.includes(name)) {
@@ -238,7 +240,7 @@ const insertHistory = db.prepare(`
     input_tpm, output_tpm, p50_response_time, p95_response_time, p99_response_time,
     ttfb_p95, prompt_reuse_ratio, actual_prompt_reuse_ratio, concurrency, peak_concurrency,
     tpot_p95, max_tpm, recommended_rpm, recommended_tpm, sla_met, user_id,
-    estimated_cost, input_price, output_price
+    estimated_cost, input_price, output_price, cached_tokens
   ) VALUES (
     @start_time, @end_time, @duration, @test_url, @model_name,
     @test_mode, @prompt_mode, @request_type, @target_rpm, @max_rpm,
@@ -248,7 +250,7 @@ const insertHistory = db.prepare(`
     @input_tpm, @output_tpm, @p50_response_time, @p95_response_time, @p99_response_time,
     @ttfb_p95, @prompt_reuse_ratio, @actual_prompt_reuse_ratio, @concurrency, @peak_concurrency,
     @tpot_p95, @max_tpm, @recommended_rpm, @recommended_tpm, @sla_met, @user_id,
-    @estimated_cost, @input_price, @output_price
+    @estimated_cost, @input_price, @output_price, @cached_tokens
   )
 `);
 
@@ -271,7 +273,7 @@ const getHistoryList = db.prepare(`
     ttfb_p95, prompt_reuse_ratio, actual_prompt_reuse_ratio,
     concurrency, peak_concurrency,
     tpot_p95, max_tpm, recommended_rpm, recommended_tpm, sla_met,
-    estimated_cost, input_price, output_price
+    estimated_cost, input_price, output_price, cached_tokens
   FROM test_history
   ORDER BY created_at DESC, id DESC
   LIMIT @limit OFFSET @offset
@@ -567,6 +569,7 @@ module.exports = {
         estimated_cost: data.estimatedCost == null ? null : data.estimatedCost,
         input_price: data.inputPrice || 0,
         output_price: data.outputPrice || 0,
+        cached_tokens: data.cachedTokens == null ? null : data.cachedTokens,
       });
 
       // 只保留最近 N 条历史记录（MAX_HISTORY_RECORDS，默认 1000）

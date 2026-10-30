@@ -24,6 +24,10 @@
     '秒': 's',
     '分': 'm',
     '时': 'h',
+    // 缓存命中率（dashboard 实时指标 / detail 概览）
+    '缓存命中率': 'Cache Hit Rate',
+    '命中': 'Hit',
+    '输入': 'Input',
     // 通用按钮 / 确认对话框（layout.js confirmDialog）
     '确认操作': 'Confirm',
     '确认': 'Confirm',
