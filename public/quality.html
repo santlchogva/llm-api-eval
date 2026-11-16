@@ -63,6 +63,15 @@
         .issue.fail { color: #fca5a5; }
         .issue.warn { color: #fcd34d; }
 
+        /* 逐题明细（语义质量等逐用例检查项） */
+        .case-detail { margin-top: 10px; border: 1px dashed var(--border); border-radius: var(--r-sm); padding: 8px 12px; }
+        .case-detail-title { font-size: var(--fs-xs); margin-bottom: 4px; }
+        .case-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; font-size: var(--fs-sm); border-top: 1px solid var(--border); flex-wrap: wrap; }
+        .case-row:first-of-type { border-top: none; }
+        .case-idx { color: var(--text-3); min-width: 20px; text-align: right; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+        .case-name { font-weight: 550; color: var(--text-1); }
+        .case-reason { color: var(--text-3); flex: 1; min-width: 160px; }
+
         pre.evidence {
             background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-sm);
             padding: 12px; font-family: var(--mono); font-size: var(--fs-xs); line-height: 1.55;
@@ -300,8 +309,9 @@
             const COMMA = EN ? ', ' : '，';
             const COLON = EN ? ': ' : '：';
 
-            const DEFAULT_IMAGE_URL = 'https://aiplatform.njsrd.com/aigc-resources/uploads/images/b3a8c718b1024ed6999a85f3ae86ea21_20260910093515.png';
-            const DEFAULT_VIDEO_URL = 'https://cos-platform-outputs.agnes-ai.cn/videos/agnes-video-2.5/task_niTw9ll7hJirC4FC5BybvnYeUsxAQvLw.mp4';
+            // 默认多模态素材用公开官方样例（Wikimedia 托管的 Anthropic 文档示例图 / W3Schools 托管的 Blender 开源电影片段），保证任何网络环境可拉取
+            const DEFAULT_IMAGE_URL = 'https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg';
+            const DEFAULT_VIDEO_URL = 'https://www.w3schools.com/html/mov_bbb.mp4';
 
             let currentReport = null;
             let running = false;
@@ -624,6 +634,17 @@
                     const issues = (c.issues || []).map((it) =>
                         `<div class="issue ${esc(it.level)}">${esc(it.message)}</div>`).join('');
                     const evidence = JSON.stringify(c.evidence, null, 2);
+                    // 逐题明细：evidence.cases 数组（语义质量 / 工具选择控制等逐用例检查项）渲染为一行一题
+                    const caseList = c.evidence && Array.isArray(c.evidence.cases) ? c.evidence.cases : null;
+                    const caseDetail = caseList && caseList.length
+                        ? `<div class="case-detail"><div class="case-detail-title muted">${t('逐题明细')}</div>${caseList.map((q, qi) => `
+                            <div class="case-row">
+                                <span class="case-idx">${qi + 1}</span>
+                                <span class="case-name">${esc(q.name || q.label || '-')}</span>
+                                <span class="badge ${q.verdict === 'pass' ? 'success' : q.verdict === 'fail' ? 'danger' : q.verdict === 'warn' ? 'warning' : 'muted'}">${STATUS_LABEL[q.verdict] || esc(q.verdict || '-')}</span>
+                                <span class="case-reason">${esc(q.reason || '')}</span>
+                            </div>`).join('')}</div>`
+                        : '';
                     const baselineEvidence = c.baselineEvidence
                         ? `<div class="mt-2 muted" style="font-size:var(--fs-xs)">${t('官方对照观测值')}</div><pre class="evidence">${esc(JSON.stringify(c.baselineEvidence, null, 2))}</pre>`
                         : '';
@@ -637,6 +658,7 @@
                             </div>
                             <div class="result-body">
                                 ${issues || '<div class="issue">' + t('无异常') + '</div>'}
+                                ${caseDetail}
                                 <pre class="evidence">${esc(evidence)}</pre>
                                 ${baselineEvidence}
                             </div>
